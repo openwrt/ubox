@@ -1,0 +1,10 @@
+mount_root
+board
+kmodloader
+lsbloader
+.*
+Makefile
+CMakeCache.txt
+CMakeFiles
+*.cmake
+install_manifest.txt
