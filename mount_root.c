@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/mount.h>
+#include <sys/wait.h>
 
 #include <asm/byteorder.h>
 
@@ -76,6 +77,24 @@ static void foreachdir(const char *dir, int (*cb)(const char*))
 			foreachdir(gl.gl_pathv[j], cb);
 
 	cb(dir);
+}
+
+static int find_overlay_mount(char *overlay)
+{
+	FILE *fp = fopen("/proc/mounts", "r");
+	static char line[256];
+	int ret = -1;
+
+	if(!fp)
+		return ret;
+
+	while (ret && fgets(line, sizeof(line), fp))
+		if (!strncmp(line, overlay, strlen(overlay)))
+			ret = 0;
+
+	fclose(fp);
+
+	return ret;
 }
 
 static char* find_mount_point(char *block, char *fs)
@@ -196,36 +215,7 @@ err_out:
 	return ret;
 }
 
-static int mtd_erase(const char *mtd)
-{
-	int fd = open(mtd, O_RDWR | O_SYNC);
-	struct mtd_info_user i;
-	struct erase_info_user e;
-	int ret;
-
-	if (!fd) {
-		ERROR("failed to open %s: %s\n", mtd, strerror(errno));
-		return -1;
-	}
-
-	ret = ioctl(fd, MEMGETINFO, &i);
-	if (ret) {
-		ERROR("ioctl(%s, MEMGETINFO) failed: %s\n", mtd, strerror(errno));
-		return -1;
-	}
-
-	e.length = i.erasesize;
-	for (e.start = 0; e.start < i.size; e.start += i.erasesize) {
-		ioctl(fd, MEMUNLOCK, &e);
-		if(ioctl(fd, MEMERASE, &e))
-			ERROR("Failed to erase block on %s at 0x%x\n", mtd, e.start);
-	}
-
-	close(fd);
-	return 0;
-}
-
-static int do_mount_jffs2(void)
+static int mtd_mount_jffs2(void)
 {
 	char rootfs_data[32];
 
@@ -363,6 +353,7 @@ static int pivot(char *new, char *old)
 	mount_move(old, "", "/tmp");
 	mount_move(old, "", "/sys");
 	mount_move(old, "", "/overlay");
+	mount_move(old, "", "/extroot");
 
 	return 0;
 }
@@ -477,6 +468,9 @@ static int main_switch2jffs(int argc, char **argv)
 	char *mp;
 	int ret = -1;
 
+	if (find_overlay_mount("overlayfs:/tmp/root"))
+		return -1;
+
 	if (check_fs_exists("overlay")) {
 		ERROR("overlayfs not found\n");
 		return ret;
@@ -509,7 +503,7 @@ static int main_switch2jffs(int argc, char **argv)
 		break;
 
 	case FS_JFFS2:
-		ret = do_mount_jffs2();
+		ret = mtd_mount_jffs2();
 		if (ret)
 			break;
 		if (mount_move("/tmp", "", "/overlay") || fopivot("/overlay", "/rom")) {
@@ -522,109 +516,36 @@ static int main_switch2jffs(int argc, char **argv)
 	return ret;
 }
 
-static int ask_user(int argc, char **argv)
-{
-	if ((argc < 2) || strcmp(argv[1], "-y")) {
-		LOG("This will erase all settings and remove any installed packages. Are you sure? [N/y]\n");
-		if (getchar() != 'y')
-			return -1;
-	}
-	return 0;
-
-}
-
-static int handle_rmdir(const char *dir)
+static int extroot(void)
 {
 	struct stat s;
-	struct dirent **namelist;
-	int n;
+	pid_t pid;
 
-	n = scandir(dir, &namelist, NULL, NULL);
-
-	if (n < 1)
+	if (stat("/sbin/block", &s))
 		return -1;
 
-	while (n--) {
-		char file[256];
+	pid = fork();
+	if (!pid) {
+		mkdir("/tmp/extroot", 0755);
+		execl("/sbin/block", "/sbin/block", "extroot", NULL);
+		exit(-1);
+	} else if (pid > 0) {
+		int status;
 
-		snprintf(file, sizeof(file), "%s%s", dir, namelist[n]->d_name);
-		if (!lstat(file, &s) && !S_ISDIR(s.st_mode)) {
-			DEBUG(1, "unlinking %s\n", file);
-			unlink(file);
+		waitpid(pid, &status, 0);
+		if (!WEXITSTATUS(status)) {
+			if (mount_move("/tmp", "", "/overlay")) {
+				ERROR("moving extroot failed - continue normal boot\n");
+				umount("/tmp/overlay");
+			} else if (fopivot("/overlay", "/rom")) {
+				ERROR("switching to extroot failed - continue normal boot\n");
+				umount("overlay");
+			} else {
+				return 0;
+			}
 		}
-		free(namelist[n]);
 	}
-	free(namelist);
-
-	DEBUG(1, "rmdir %s\n", dir);
-	rmdir(dir);
-
-	return 0;
-}
-
-static int main_jffs2reset(int argc, char **argv)
-{
-	char mtd[32];
-	char *mp;
-
-	if (ask_user(argc, argv))
-		return -1;
-
-	if (check_fs_exists("overlay")) {
-		ERROR("overlayfs not found\n");
-		return -1;
-	}
-
-	if (find_mtd_block("rootfs_data", mtd, sizeof(mtd))) {
-		ERROR("no rootfs_data was found\n");
-		return -1;
-	}
-
-	mp = find_mount_point(mtd, "jffs2");
-	if (mp) {
-		LOG("%s is mounted as %s, only ereasing files\n", mtd, mp);
-		foreachdir(mp, handle_rmdir);
-		mount(mp, "/", NULL, MS_REMOUNT, 0);
-	} else {
-		LOG("%s is not mounted, erasing it\n", mtd);
-		find_mtd_char("rootfs_data", mtd, sizeof(mtd));
-		mtd_erase(mtd);
-	}
-
-	return 0;
-}
-
-static int main_jffs2mark(int argc, char **argv)
-{
-	FILE *fp;
-	__u32 deadc0de = __cpu_to_be32(0xdeadc0de);
-	char mtd[32];
-	size_t sz;
-
-	if (ask_user(argc, argv))
-		return -1;
-
-	if (find_mtd_block("rootfs_data", mtd, sizeof(mtd))) {
-		ERROR("no rootfs_data was found\n");
-		return -1;
-	}
-
-	fp = fopen(mtd, "w");
-	LOG("%s - marking with deadc0de\n", mtd);
-	if (!fp) {
-		ERROR("opening %s failed\n", mtd);
-		return -1;
-	}
-
-	sz = fwrite(&deadc0de, sizeof(deadc0de), 1, fp);
-	fclose(fp);
-
-	if (sz != 1) {
-		ERROR("writing %s failed: %s\n", mtd, strerror(errno));
-		return -1;
-	}
-
-	return 0;
+	return -1;
 }
 
 int main(int argc, char **argv)
@@ -637,11 +558,8 @@ int main(int argc, char **argv)
 	if (!strcmp(basename(*argv), "switch2jffs"))
 		return main_switch2jffs(argc, argv);
 
-	if (!strcmp(basename(*argv), "jffs2mark"))
-		return main_jffs2mark(argc, argv);
-
-	if (!strcmp(basename(*argv), "jffs2reset"))
-		return main_jffs2reset(argc, argv);
+	if (!getenv("PREINIT"))
+		return -1;
 
 	if (find_mtd_char("rootfs_data", mtd, sizeof(mtd))) {
 		if (!find_mtd_char("rootfs", mtd, sizeof(mtd)))
@@ -649,6 +567,11 @@ int main(int argc, char **argv)
 		LOG("mounting /dev/root\n");
 		mount("/dev/root", "/", NULL, MS_NOATIME | MS_REMOUNT, 0);
 	} else {
+		if (!extroot()) {
+			fprintf(stderr, "mount_root: switched to extroot\n");
+			return 0;
+		}
+
 		switch (jffs2_ready(mtd)) {
 		case FS_NONE:
 		case FS_DEADCODE:
@@ -662,7 +585,7 @@ int main(int argc, char **argv)
 				return -1;
 			}
 
-			do_mount_jffs2();
+			mtd_mount_jffs2();
 			DEBUG(1, "switching to jffs2\n");
 			if (mount_move("/tmp", "", "/overlay") || fopivot("/overlay", "/rom")) {
 				ERROR("switching to jffs2 failed - fallback to ramoverlay\n");
