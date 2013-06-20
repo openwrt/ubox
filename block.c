@@ -254,6 +254,7 @@ static void cache_load(int mtd)
 	if (mtd)
 		_cache_load("/dev/mtdblock*");
 	_cache_load("/dev/sd*");
+	_cache_load("/dev/mmcblk*");
 }
 
 static int print_block_info(struct blkid_struct_probe *pr)
