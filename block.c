@@ -449,6 +449,50 @@ static int find_block_mtd(char *name, char *part, int plen)
 	return 0;
 }
 
+static int check_extroot(char *path)
+{
+	struct blkid_struct_probe *pr = NULL;
+	char fs[32];
+
+	if (find_block_mtd("rootfs", fs, sizeof(fs)))
+		return -1;
+
+	list_for_each_entry(pr, &devices, list) {
+		if (!strcmp(pr->dev, fs)) {
+			struct stat s;
+			FILE *fp = NULL;
+			char tag[32];
+			char uuid[32] = { 0 };
+
+			snprintf(tag, sizeof(tag), "%s/etc/.extroot-uuid", path);
+			if (stat(tag, &s)) {
+				fp = fopen(tag, "w+");
+				if (!fp) {
+					fprintf(stderr, "extroot: failed to write uuid tag file\n");
+					/* return 0 to continue boot regardless of error */
+					return 0;
+				}
+				fputs(pr->uuid, fp);
+				fclose(fp);
+				return 0;
+			}
+
+			fp = fopen(tag, "r");
+			if (!fp) {
+				fprintf(stderr, "extroot: failed to open uuid tag file\n");
+				return -1;
+			}
+
+			fgets(uuid, sizeof(uuid), fp);
+			fclose(fp);
+			if (!strcmp(uuid, pr->uuid))
+				return 0;
+			fprintf(stderr, "extroot: uuid tag does not match rom uuid\n");
+		}
+	}
+	return -1;
+}
+
 static int mount_extroot(char *path, char *cfg)
 {
         struct blkid_struct_probe *pr;
@@ -467,9 +511,14 @@ static int mount_extroot(char *path, char *cfg)
 		mkdir_p(path);
 		err = mount(pr->dev, path, pr->id->name, 0, (m->options) ? (m->options) : (""));
 
-		if (err)
+		if (err) {
 			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
 					pr->dev, pr->id->name, path, err, strerror(err));
+		} else {
+			err = check_extroot(path);
+			if (err)
+				umount(path);
+		}
 	}
 
 	return err;
