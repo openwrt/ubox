@@ -539,7 +539,7 @@ static int extroot(void)
 				umount("/tmp/overlay");
 			} else if (fopivot("/overlay", "/rom")) {
 				ERROR("switching to extroot failed - continue normal boot\n");
-				umount("overlay");
+				umount("/overlay");
 			} else {
 				return 0;
 			}
