@@ -47,6 +47,9 @@ struct mount {
 	char *options;
 	char *uuid;
 	char *label;
+	char *device;
+	int extroot;
+	int overlay;
 	int disabled_fsck;
 	unsigned int prio;
 };
@@ -54,19 +57,38 @@ struct mount {
 static struct vlist_tree mounts;
 static struct blob_buf b;
 static LIST_HEAD(devices);
+static int anon_mount, anon_swap;
+
+enum {
+	CFG_ANON_MOUNT,
+	CFG_ANON_SWAP,
+	__CFG_MAX
+};
+
+static const struct blobmsg_policy config_policy[__CFG_MAX] = {
+	[CFG_ANON_SWAP] = { .name = "anon_swap", .type = BLOBMSG_TYPE_INT32 },
+	[CFG_ANON_MOUNT] = { .name = "anon_mount", .type = BLOBMSG_TYPE_INT32 },
+};
 
 enum {
 	MOUNT_UUID,
 	MOUNT_LABEL,
 	MOUNT_ENABLE,
 	MOUNT_TARGET,
+	MOUNT_DEVICE,
 	MOUNT_OPTIONS,
 	__MOUNT_MAX
+};
+
+static const struct uci_blob_param_list config_attr_list = {
+	.n_params = __CFG_MAX,
+	.params = config_policy,
 };
 
 static const struct blobmsg_policy mount_policy[__MOUNT_MAX] = {
 	[MOUNT_UUID] = { .name = "uuid", .type = BLOBMSG_TYPE_STRING },
 	[MOUNT_LABEL] = { .name = "label", .type = BLOBMSG_TYPE_STRING },
+	[MOUNT_DEVICE] = { .name = "device", .type = BLOBMSG_TYPE_STRING },
 	[MOUNT_TARGET] = { .name = "target", .type = BLOBMSG_TYPE_STRING },
 	[MOUNT_OPTIONS] = { .name = "options", .type = BLOBMSG_TYPE_STRING },
 	[MOUNT_ENABLE] = { .name = "enabled", .type = BLOBMSG_TYPE_INT32 },
@@ -80,6 +102,7 @@ static const struct uci_blob_param_list mount_attr_list = {
 enum {
 	SWAP_ENABLE,
 	SWAP_UUID,
+	SWAP_DEVICE,
 	SWAP_PRIO,
 	__SWAP_MAX
 };
@@ -87,6 +110,7 @@ enum {
 static const struct blobmsg_policy swap_policy[__SWAP_MAX] = {
 	[SWAP_ENABLE] = { .name = "enabled", .type = BLOBMSG_TYPE_INT32 },
 	[SWAP_UUID] = { .name = "uuid", .type = BLOBMSG_TYPE_STRING },
+	[SWAP_DEVICE] = { .name = "device", .type = BLOBMSG_TYPE_STRING },
 	[SWAP_PRIO] = { .name = "priority", .type = BLOBMSG_TYPE_INT32 },
 };
 
@@ -112,10 +136,10 @@ static int mount_add(struct uci_section *s)
 	uci_to_blob(&b, s, &mount_attr_list);
 	blobmsg_parse(mount_policy, __MOUNT_MAX, tb, blob_data(b.head), blob_len(b.head));
 
-	if (!tb[MOUNT_LABEL] && !tb[MOUNT_UUID])
+	if (!tb[MOUNT_LABEL] && !tb[MOUNT_UUID] && !tb[MOUNT_DEVICE])
 		return -1;
 
-	if (!tb[MOUNT_TARGET])
+	if (tb[MOUNT_ENABLE] && !blobmsg_get_u32(tb[MOUNT_ENABLE]))
 		return -1;
 
 	m = malloc(sizeof(struct mount));
@@ -124,9 +148,19 @@ static int mount_add(struct uci_section *s)
 	m->label = blobmsg_get_strdup(tb[MOUNT_LABEL]);
 	m->target = blobmsg_get_strdup(tb[MOUNT_TARGET]);
 	m->options = blobmsg_get_strdup(tb[MOUNT_OPTIONS]);
+	m->device = blobmsg_get_strdup(tb[MOUNT_DEVICE]);
+	m->overlay = m->extroot = 0;
+	if (m->target && !strcmp(m->target, "/"))
+		m->extroot = 1;
+	if (m->target && !strcmp(m->target, "/overlay"))
+		m->extroot = m->overlay = 1;
 
-	if ((!tb[MOUNT_ENABLE]) || blobmsg_get_u32(tb[MOUNT_ENABLE]))
-		vlist_add(&mounts, &m->node, m->target);
+	if (m->uuid)
+		vlist_add(&mounts, &m->node, m->uuid);
+	else if (m->label)
+		vlist_add(&mounts, &m->node, m->label);
+	else if (m->device)
+		vlist_add(&mounts, &m->node, m->device);
 
 	return 0;
 }
@@ -140,48 +174,72 @@ static int swap_add(struct uci_section *s)
 	uci_to_blob(&b, s, &swap_attr_list);
 	blobmsg_parse(swap_policy, __SWAP_MAX, tb, blob_data(b.head), blob_len(b.head));
 
-	if (!tb[SWAP_UUID])
+	if (!tb[SWAP_UUID] && !tb[SWAP_DEVICE])
 		return -1;
 
 	m = malloc(sizeof(struct mount));
 	memset(m, 0, sizeof(struct mount));
 	m->type = TYPE_SWAP;
 	m->uuid = blobmsg_get_strdup(tb[SWAP_UUID]);
+	m->device = blobmsg_get_strdup(tb[SWAP_DEVICE]);
 	if (tb[SWAP_PRIO])
 		m->prio = blobmsg_get_u32(tb[SWAP_PRIO]);
 	if (m->prio)
 		m->prio = ((m->prio << SWAP_FLAG_PRIO_SHIFT) & SWAP_FLAG_PRIO_MASK) | SWAP_FLAG_PREFER;
 
 	if ((!tb[SWAP_ENABLE]) || blobmsg_get_u32(tb[SWAP_ENABLE]))
-		vlist_add(&mounts, &m->node, m->uuid);
+		vlist_add(&mounts, &m->node, (m->uuid) ? (m->uuid) : (m->device));
 
 	return 0;
 }
 
-static struct mount* find_swap(const char *uuid)
+static int global_add(struct uci_section *s)
 {
-	struct mount *m;
+	struct blob_attr *tb[__CFG_MAX] = { 0 };
 
-	if (!uuid)
-		return NULL;
+        blob_buf_init(&b, 0);
+	uci_to_blob(&b, s, &config_attr_list);
+	blobmsg_parse(config_policy, __CFG_MAX, tb, blob_data(b.head), blob_len(b.head));
 
-	vlist_for_each_element(&mounts, m, node)
-		if ((m->type == TYPE_SWAP) && m->uuid && !strcmp(m->uuid, uuid))
-			return m;
+	if ((tb[CFG_ANON_MOUNT]) && blobmsg_get_u32(tb[CFG_ANON_MOUNT]))
+		anon_mount = 1;
+	if ((tb[CFG_ANON_SWAP]) && blobmsg_get_u32(tb[CFG_ANON_SWAP]))
+		anon_swap = 1;
 
-	return NULL;
+	return 0;
 }
 
-static struct mount* find_block(const char *uuid, const char *label, const char *target)
+static struct mount* find_swap(const char *uuid, const char *device)
 {
 	struct mount *m;
 
 	vlist_for_each_element(&mounts, m, node) {
-		if ((m->type == TYPE_MOUNT) && m->uuid && uuid && !strcmp(m->uuid, uuid))
+		if (m->type != TYPE_SWAP)
+			continue;
+		if (uuid && m->uuid && !strcmp(m->uuid, uuid))
 			return m;
-		if ((m->type == TYPE_MOUNT) && m->label && label && !strcmp(m->label, label))
+		if (device && m->device && !strcmp(m->device, device))
 			return m;
-		if ((m->type == TYPE_MOUNT) && target && !strcmp(m->target, target))
+	}
+
+	return NULL;
+}
+
+static struct mount* find_block(const char *uuid, const char *label, const char *device,
+				const char *target)
+{
+	struct mount *m;
+
+	vlist_for_each_element(&mounts, m, node) {
+		if (m->type != TYPE_MOUNT)
+			continue;
+		if (m->uuid && uuid && !strcmp(m->uuid, uuid))
+			return m;
+		if (m->label && label && !strcmp(m->label, label))
+			return m;
+		if (m->target && target && !strcmp(m->target, target))
+			return m;
+		if (m->device && device && !strcmp(m->device, device))
 			return m;
 	}
 
@@ -219,6 +277,8 @@ static int config_load(char *cfg)
 			mount_add(s);
 		if (!strcmp(s->type, "swap"))
 			swap_add(s);
+		if (!strcmp(s->type, "global"))
+			global_add(s);
 	}
 	vlist_flush(&mounts);
 
@@ -253,8 +313,8 @@ static void cache_load(int mtd)
 {
 	if (mtd)
 		_cache_load("/dev/mtdblock*");
-	_cache_load("/dev/sd*");
 	_cache_load("/dev/mmcblk*");
+	_cache_load("/dev/sd*");
 }
 
 static int print_block_info(struct blkid_struct_probe *pr)
@@ -279,16 +339,16 @@ static int print_block_info(struct blkid_struct_probe *pr)
 
 static int print_block_uci(struct blkid_struct_probe *pr)
 {
-	if (!pr->uuid[0])
-		return 0;
-
 	if (!strcmp(pr->id->name, "swap")) {
 		printf("config 'swap'\n");
 	} else {
 		printf("config 'mount'\n");
 		printf("\toption\ttarget\t'/mnt/%s'\n", basename(pr->dev));
 	}
-	printf("\toption\tuuid\t'%s'\n", pr->uuid);
+	if (pr->uuid[0])
+		printf("\toption\tuuid\t'%s'\n", pr->uuid);
+	else
+		printf("\toption\tdevice\t'%s'\n", basename(pr->dev));
 	printf("\toption\tenabled\t'0'\n\n");
 
 	return 0;
@@ -392,28 +452,51 @@ static int main_hotplug(int argc, char **argv)
 	cache_load(0);
 
 	pr = find_block_info(NULL, NULL, path);
-	if (!pr && pr->uuid) {
+	if (!pr) {
 		fprintf(stderr, "failed to read blockinfo for %s\n", path);
 		return -1;
 	}
 
-	m = find_swap(pr->uuid);
-	if (m) {
-		if (!strcmp(action, "add"))
-			swapon(path, m->prio);
-		else
-			swapoff(path);
-	} else {
-		m = find_block(pr->uuid, pr->label, NULL);
-		if (m && strcmp(m->target, "/")) {
-			int err = 0;
-
-			mkdir_p(m->target);
-			err = mount(path, m->target, pr->id->name, 0, (m->options) ? (m->options) : (""));
-			if (err)
-				fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
-						path, pr->id->name, m->target, err, strerror(err));
+	if (!strcmp(pr->id->name, "swap")) {
+		m = find_swap(pr->uuid, device);
+		if (m || anon_swap) {
+			if (!strcmp(action, "add"))
+				swapon(path, (m) ? (m->prio) : (0));
+			else
+				swapoff(path);
 		}
+		return 0;
+	}
+
+	m = find_block(pr->uuid, pr->label, device, NULL);
+	if (m && !m->extroot) {
+		char *target = m->target;
+		char _target[] = "/mnt/mmcblk123";
+		int err = 0;
+
+		if (!target) {
+			snprintf(_target, sizeof(_target), "/mnt/%s", device);
+			target = _target;
+		}
+		mkdir_p(target);
+		err = mount(path, target, pr->id->name, 0, (m->options) ? (m->options) : (""));
+		if (err)
+			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
+					path, pr->id->name, target, err, strerror(err));
+		return err;
+	}
+
+	if (anon_mount) {
+		char target[] = "/mnt/mmcblk123";
+		int err = 0;
+
+		snprintf(target, sizeof(target), "/mnt/%s", device);
+		mkdir_p(target);
+		err = mount(path, target, pr->id->name, 0, "");
+		if (err)
+			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
+					path, pr->id->name, target, err, strerror(err));
+		return err;
 	}
 
 	return 0;
@@ -494,28 +577,41 @@ static int check_extroot(char *path)
 	return -1;
 }
 
-static int mount_extroot(char *path, char *cfg)
+static int mount_extroot(char *cfg)
 {
-        struct blkid_struct_probe *pr;
+	char overlay[] = "/tmp/overlay";
+	char mnt[] = "/tmp/mnt";
+	char *path = mnt;
+	struct blkid_struct_probe *pr;
 	struct mount *m;
 	int err = -1;
 
 	if (config_load(cfg))
-		return 2;
+		return -2;
 
-	m = find_block(NULL, NULL, "/");
+	m = find_block(NULL, NULL, NULL, "/");
 	if (!m)
-		return 1;
+		m = find_block(NULL, NULL, NULL, "/overlay");
+
+	if (!m || !m->extroot)
+		return -1;
 
 	pr = find_block_info(m->uuid, m->label, NULL);
 	if (pr) {
+		if (strncmp(pr->id->name, "ext", 3)) {
+			fprintf(stderr, "extroot: %s is not supported, try ext4\n", pr->id->name);
+			return -1;
+		}
+		if (m->overlay)
+			path = overlay;
 		mkdir_p(path);
+
 		err = mount(pr->dev, path, pr->id->name, 0, (m->options) ? (m->options) : (""));
 
 		if (err) {
 			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
 					pr->dev, pr->id->name, path, err, strerror(err));
-		} else {
+		} else if (m->overlay) {
 			err = check_extroot(path);
 			if (err)
 				umount(path);
@@ -530,15 +626,14 @@ static int main_extroot(int argc, char **argv)
 	struct blkid_struct_probe *pr;
 	char fs[32] = { 0 };
 	char fs_data[32] = { 0 };
-	int err = 1;
-	char extroot[] = "/tmp/overlay";
+	int err = -1;
 
 	if (!getenv("PREINIT"))
 		return -1;
 
 	if (argc != 2) {
 		fprintf(stderr, "Usage: block extroot mountpoint\n");
-		return 1;
+		return -1;
 	}
 
 	mkblkdev();
@@ -546,11 +641,11 @@ static int main_extroot(int argc, char **argv)
 
 	find_block_mtd("rootfs", fs, sizeof(fs));
 	if (!fs[0])
-		return 2;
+		return -2;
 
 	pr = find_block_info(NULL, NULL, fs);
-	if (!pr || strcmp(pr->id->name, "squashfs"))
-		return 3;
+	if (!pr)
+		return -3;
 
 	find_block_mtd("rootfs_data", fs_data, sizeof(fs_data));
 	if (fs_data[0]) {
@@ -560,19 +655,17 @@ static int main_extroot(int argc, char **argv)
 
 			mkdir_p(cfg);
 			if (!mount(fs_data, cfg, "jffs2", MS_NOATIME, NULL)) {
-				err = mount_extroot(extroot, cfg);
+				err = mount_extroot(cfg);
 				umount2(cfg, MNT_DETACH);
 			}
-			if (err)
-				rmdir(extroot);
+			if (err < 0)
+				rmdir("/tmp/overlay");
 			rmdir(cfg);
 			return err;
 		}
 	}
 
-	err = mount_extroot(extroot, NULL);
-
-	return err;
+	return mount_extroot(NULL);
 }
 
 static int main_detect(int argc, char **argv)
@@ -702,6 +795,8 @@ static int main_swapoff(int argc, char **argv)
 int main(int argc, char **argv)
 {
 	char *base = basename(*argv);
+
+	umask(0);
 
 	if (!strcmp(base, "swapon"))
 		return main_swapon(argc, argv);

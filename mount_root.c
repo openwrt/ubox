@@ -97,6 +97,37 @@ static int find_overlay_mount(char *overlay)
 	return ret;
 }
 
+static char* find_mount(char *mp)
+{
+	FILE *fp = fopen("/proc/mounts", "r");
+	static char line[256];
+	char *point = NULL;
+
+	if(!fp)
+		return NULL;
+
+	while (fgets(line, sizeof(line), fp)) {
+		char *s, *t = strstr(line, " ");
+
+		if (!t)
+			return NULL;
+		t++;
+		s = strstr(t, " ");
+		if (!s)
+			return NULL;
+		*s = '\0';
+
+		if (!strcmp(t, mp)) {
+			fclose(fp);
+			return t;
+		}
+	}
+
+	fclose(fp);
+
+	return point;
+}
+
 static char* find_mount_point(char *block, char *fs)
 {
 	FILE *fp = fopen("/proc/mounts", "r");
@@ -219,7 +250,6 @@ static int mtd_mount_jffs2(void)
 {
 	char rootfs_data[32];
 
-
 	if (mkdir("/tmp/overlay", 0755)) {
 		ERROR("failed to mkdir /tmp/overlay: %s\n", strerror(errno));
 		return -1;
@@ -311,7 +341,7 @@ static int mount_move(char *oldroot, char *newroot, char *dir)
 	char newdir[64];
 	int ret;
 
-	DEBUG(2, "%s %s\n", oldroot, dir);
+	DEBUG(2, "%s %s %s\n", oldroot, newroot, dir);
 
 	snprintf(olddir, sizeof(olddir), "%s%s", oldroot, dir);
 	snprintf(newdir, sizeof(newdir), "%s%s", newroot, dir);
@@ -353,11 +383,9 @@ static int pivot(char *new, char *old)
 	mount_move(old, "", "/tmp");
 	mount_move(old, "", "/sys");
 	mount_move(old, "", "/overlay");
-	mount_move(old, "", "/extroot");
 
 	return 0;
 }
-
 
 static int fopivot(char *rw_root, char *ro_root)
 {
@@ -534,14 +562,34 @@ static int extroot(void)
 
 		waitpid(pid, &status, 0);
 		if (!WEXITSTATUS(status)) {
-			if (mount_move("/tmp", "", "/overlay")) {
-				ERROR("moving extroot failed - continue normal boot\n");
-				umount("/tmp/overlay");
-			} else if (fopivot("/overlay", "/rom")) {
-				ERROR("switching to extroot failed - continue normal boot\n");
-				umount("/overlay");
-			} else {
-				return 0;
+			if (find_mount("/tmp/mnt")) {
+				mount("/dev/root", "/", NULL, MS_NOATIME | MS_REMOUNT | MS_RDONLY, 0);
+
+				mkdir("/tmp/mnt/proc", 0755);
+				mkdir("/tmp/mnt/dev", 0755);
+				mkdir("/tmp/mnt/sys", 0755);
+				mkdir("/tmp/mnt/tmp", 0755);
+				mkdir("/tmp/mnt/rom", 0755);
+
+				if (mount_move("/tmp", "", "/mnt")) {
+					ERROR("moving pivotroot failed - continue normal boot\n");
+					umount("/tmp/mnt");
+				} else if (pivot("/mnt", "/rom")) {
+					ERROR("switching to pivotroot failed - continue normal boot\n");
+					umount("/mnt");
+				} else {
+					return 0;
+				}
+			} else if (find_mount("/tmp/overlay")) {
+				if (mount_move("/tmp", "", "/overlay")) {
+					ERROR("moving extroot failed - continue normal boot\n");
+					umount("/tmp/overlay");
+				} else if (fopivot("/overlay", "/rom")) {
+					ERROR("switching to extroot failed - continue normal boot\n");
+					umount("/overlay");
+				} else {
+					return 0;
+				}
 			}
 		}
 	}
