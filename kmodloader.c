@@ -604,6 +604,8 @@ static int main_loader(int argc, char **argv)
 	strcpy(path, dir);
 	strcat(path, "*");
 
+	scan_loaded_modules();
+
 	syslog(0, "kmodloader: loading kernel modules from %s\n", path);
 
 	if (glob(path, gl_flags, NULL, &gl) >= 0) {
@@ -619,6 +621,7 @@ static int main_loader(int argc, char **argv)
 
 				while (fgets(mod, sizeof(mod), fp)) {
 					char *nl = strchr(mod, '\n');
+					struct module *m;
 					char *opts;
 
 					if (nl)
@@ -628,6 +631,9 @@ static int main_loader(int argc, char **argv)
 					if (opts)
 						*opts++ = '\0';
 
+					m = find_module(get_module_name(mod));
+					if (m)
+						continue;
 					insert_module(get_module_path(mod), (opts) ? (opts) : (""));
 				}
 				fclose(fp);
