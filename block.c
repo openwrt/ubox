@@ -57,17 +57,21 @@ struct mount {
 static struct vlist_tree mounts;
 static struct blob_buf b;
 static LIST_HEAD(devices);
-static int anon_mount, anon_swap;
+static int anon_mount, anon_swap, auto_mount, auto_swap;
 
 enum {
 	CFG_ANON_MOUNT,
 	CFG_ANON_SWAP,
+	CFG_AUTO_MOUNT,
+	CFG_AUTO_SWAP,
 	__CFG_MAX
 };
 
 static const struct blobmsg_policy config_policy[__CFG_MAX] = {
 	[CFG_ANON_SWAP] = { .name = "anon_swap", .type = BLOBMSG_TYPE_INT32 },
 	[CFG_ANON_MOUNT] = { .name = "anon_mount", .type = BLOBMSG_TYPE_INT32 },
+	[CFG_AUTO_SWAP] = { .name = "auto_swap", .type = BLOBMSG_TYPE_INT32 },
+	[CFG_AUTO_MOUNT] = { .name = "auto_mount", .type = BLOBMSG_TYPE_INT32 },
 };
 
 enum {
@@ -205,6 +209,11 @@ static int global_add(struct uci_section *s)
 		anon_mount = 1;
 	if ((tb[CFG_ANON_SWAP]) && blobmsg_get_u32(tb[CFG_ANON_SWAP]))
 		anon_swap = 1;
+
+	if ((tb[CFG_AUTO_MOUNT]) && blobmsg_get_u32(tb[CFG_AUTO_MOUNT]))
+		auto_mount = 1;
+	if ((tb[CFG_AUTO_SWAP]) && blobmsg_get_u32(tb[CFG_AUTO_SWAP]))
+		auto_swap = 1;
 
 	return 0;
 }
@@ -416,12 +425,105 @@ static void mkdir_p(char *dir)
 	}
 }
 
-static int main_hotplug(int argc, char **argv)
+static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 {
 	struct mount *m;
-	char path[256];
+	char *device = basename(pr->dev);
+
+	if (!pr)
+		return -1;
+
+	if (!strcmp(pr->id->name, "swap")) {
+		if (hotplug && !auto_swap)
+			return -1;
+		m = find_swap(pr->uuid, device);
+		if (m || anon_swap)
+			swapon(pr->dev, (m) ? (m->prio) : (0));
+
+		return 0;
+	}
+
+	if (hotplug && !auto_mount)
+		return -1;
+
+	if (find_mount_point(pr->dev)) {
+		fprintf(stderr, "%s is already mounted\n", pr->dev);
+		return -1;
+	}
+
+	m = find_block(pr->uuid, pr->label, device, NULL);
+	if (m && m->extroot)
+		return -1;
+
+	if (m) {
+		char *target = m->target;
+		char _target[] = "/mnt/mmcblk123";
+		int err = 0;
+
+		if (!target) {
+			snprintf(_target, sizeof(_target), "/mnt/%s", device);
+			target = _target;
+		}
+		mkdir_p(target);
+		err = mount(pr->dev, target, pr->id->name, 0, (m->options) ? (m->options) : (""));
+		if (err)
+			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
+					pr->dev, pr->id->name, target, err, strerror(err));
+		return err;
+	}
+
+	if (anon_mount) {
+		char target[] = "/mnt/mmcblk123";
+		int err = 0;
+
+		snprintf(target, sizeof(target), "/mnt/%s", device);
+		mkdir_p(target);
+		err = mount(pr->dev, target, pr->id->name, 0, "");
+		if (err)
+			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
+					pr->dev, pr->id->name, target, err, strerror(err));
+		return err;
+	}
+
+	return 0;
+}
+
+static int umount_device(struct blkid_struct_probe *pr)
+{
+	struct mount *m;
+	char *device = basename(pr->dev);
+	char *mp;
+	int err;
+
+	if (!pr)
+		return -1;
+
+	if (!strcmp(pr->id->name, "swap"))
+		return -1;
+
+	mp = find_mount_point(pr->dev);
+	if (!mp)
+		return -1;
+
+	m = find_block(pr->uuid, pr->label, device, NULL);
+	if (m && m->extroot)
+		return -1;
+
+	err = umount2(mp, MNT_DETACH);
+	if (err)
+		fprintf(stderr, "unmounting %s (%s)  failed (%d) - %s\n",
+			pr->dev, mp, err, strerror(err));
+	else
+		fprintf(stderr, "unmounted %s (%s)\n",
+			pr->dev, mp);
+
+	return err;
+}
+
+static int main_hotplug(int argc, char **argv)
+{
+	char path[32];
 	char *action, *device, *mount_point;
-	struct blkid_struct_probe *pr;
 
 	action = getenv("ACTION");
 	device = getenv("DEVNAME");
@@ -437,7 +539,7 @@ static int main_hotplug(int argc, char **argv)
 			err = umount2(mount_point, MNT_DETACH);
 
 		if (err)
-			fprintf(stderr, "unmount of %s failed (%d) - %s\n",
+			fprintf(stderr, "umount of %s failed (%d) - %s\n",
 					mount_point, err, strerror(err));
 
 		return 0;
@@ -451,55 +553,7 @@ static int main_hotplug(int argc, char **argv)
 		return -1;
 	cache_load(0);
 
-	pr = find_block_info(NULL, NULL, path);
-	if (!pr) {
-		fprintf(stderr, "failed to read blockinfo for %s\n", path);
-		return -1;
-	}
-
-	if (!strcmp(pr->id->name, "swap")) {
-		m = find_swap(pr->uuid, device);
-		if (m || anon_swap) {
-			if (!strcmp(action, "add"))
-				swapon(path, (m) ? (m->prio) : (0));
-			else
-				swapoff(path);
-		}
-		return 0;
-	}
-
-	m = find_block(pr->uuid, pr->label, device, NULL);
-	if (m && !m->extroot) {
-		char *target = m->target;
-		char _target[] = "/mnt/mmcblk123";
-		int err = 0;
-
-		if (!target) {
-			snprintf(_target, sizeof(_target), "/mnt/%s", device);
-			target = _target;
-		}
-		mkdir_p(target);
-		err = mount(path, target, pr->id->name, 0, (m->options) ? (m->options) : (""));
-		if (err)
-			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
-					path, pr->id->name, target, err, strerror(err));
-		return err;
-	}
-
-	if (anon_mount) {
-		char target[] = "/mnt/mmcblk123";
-		int err = 0;
-
-		snprintf(target, sizeof(target), "/mnt/%s", device);
-		mkdir_p(target);
-		err = mount(path, target, pr->id->name, 0, "");
-		if (err)
-			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
-					path, pr->id->name, target, err, strerror(err));
-		return err;
-	}
-
-	return 0;
+	return mount_device(find_block_info(NULL, NULL, path), 1);
 }
 
 static int find_block_mtd(char *name, char *part, int plen)
@@ -668,11 +722,44 @@ static int main_extroot(int argc, char **argv)
 	return mount_extroot(NULL);
 }
 
+static int main_mount(int argc, char **argv)
+{
+	struct blkid_struct_probe *pr;
+
+	if (config_load(NULL))
+		return -1;
+
+	cache_load(0);
+	list_for_each_entry(pr, &devices, list)
+		mount_device(pr, 0);
+
+	return 0;
+}
+
+static int main_umount(int argc, char **argv)
+{
+	struct blkid_struct_probe *pr;
+
+	if (config_load(NULL))
+		return -1;
+
+	cache_load(0);
+	list_for_each_entry(pr, &devices, list)
+		umount_device(pr);
+
+	return 0;
+}
+
 static int main_detect(int argc, char **argv)
 {
 	struct blkid_struct_probe *pr;
 
 	cache_load(0);
+	printf("config 'global'\n");
+	printf("\toption\tanon_swap\t'0'\n");
+	printf("\toption\tanon_mount\t'0'\n");
+	printf("\toption\tauto_swap\t'1'\n");
+	printf("\toption\tauto_mount\t'1'\n\n");
 	list_for_each_entry(pr, &devices, list)
 		print_block_uci(pr);
 
@@ -816,9 +903,15 @@ int main(int argc, char **argv)
 
 		if (!strcmp(argv[1], "extroot"))
 			return main_extroot(argc, argv);
+
+		if (!strcmp(argv[1], "mount"))
+			return main_mount(argc, argv);
+
+		if (!strcmp(argv[1], "umount"))
+			return main_umount(argc, argv);
 	}
 
-	fprintf(stderr, "Usage: block <info|detect>\n");
+	fprintf(stderr, "Usage: block <info|mount|umount|detect>\n");
 
 	return -1;
 }
