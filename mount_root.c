@@ -490,6 +490,139 @@ static int handle_whiteout(const char *dir)
 	return 0;
 }
 
+static int mtd_erase(const char *mtd)
+{
+	int fd = open(mtd, O_RDWR | O_SYNC);
+	struct mtd_info_user i;
+	struct erase_info_user e;
+	int ret;
+
+	if (!fd) {
+		ERROR("failed to open %s: %s\n", mtd, strerror(errno));
+		return -1;
+	}
+
+	ret = ioctl(fd, MEMGETINFO, &i);
+	if (ret) {
+		ERROR("ioctl(%s, MEMGETINFO) failed: %s\n", mtd, strerror(errno));
+		return -1;
+	}
+
+	e.length = i.erasesize;
+	for (e.start = 0; e.start < i.size; e.start += i.erasesize) {
+		ioctl(fd, MEMUNLOCK, &e);
+		if(ioctl(fd, MEMERASE, &e))
+			ERROR("Failed to erase block on %s at 0x%x\n", mtd, e.start);
+	}
+
+	close(fd);
+	return 0;
+}
+
+static int ask_user(int argc, char **argv)
+{
+	if ((argc < 2) || strcmp(argv[1], "-y")) {
+		LOG("This will erase all settings and remove any installed packages. Are you sure? [N/y]\n");
+		if (getchar() != 'y')
+			return -1;
+	}
+	return 0;
+
+}
+
+static int handle_rmdir(const char *dir)
+{
+	struct stat s;
+	struct dirent **namelist;
+	int n;
+
+	n = scandir(dir, &namelist, NULL, NULL);
+
+	if (n < 1)
+		return -1;
+
+	while (n--) {
+		char file[256];
+
+		snprintf(file, sizeof(file), "%s%s", dir, namelist[n]->d_name);
+		if (!lstat(file, &s) && !S_ISDIR(s.st_mode)) {
+			DEBUG(1, "unlinking %s\n", file);
+			unlink(file);
+		}
+		free(namelist[n]);
+	}
+	free(namelist);
+
+	DEBUG(1, "rmdir %s\n", dir);
+	rmdir(dir);
+
+	return 0;
+}
+
+static int main_jffs2reset(int argc, char **argv)
+{
+	char mtd[32];
+	char *mp;
+
+	if (ask_user(argc, argv))
+		return -1;
+
+	if (check_fs_exists("overlay")) {
+		ERROR("overlayfs not found\n");
+		return -1;
+	}
+
+	if (find_mtd_block("rootfs_data", mtd, sizeof(mtd))) {
+		ERROR("no rootfs_data was found\n");
+		return -1;
+	}
+
+	mp = find_mount_point(mtd, "jffs2");
+	if (mp) {
+		LOG("%s is mounted as %s, only ereasing files\n", mtd, mp);
+		foreachdir(mp, handle_rmdir);
+		mount(mp, "/", NULL, MS_REMOUNT, 0);
+	} else {
+		LOG("%s is not mounted, erasing it\n", mtd);
+		find_mtd_char("rootfs_data", mtd, sizeof(mtd));
+		mtd_erase(mtd);
+	}
+
+	return 0;
+}
+
+static int main_jffs2mark(int argc, char **argv)
+{
+	FILE *fp;
+	__u32 deadc0de = __cpu_to_be32(0xdeadc0de);
+	char mtd[32];
+	size_t sz;
+
+	if (ask_user(argc, argv))
+		return -1;
+
+	if (find_mtd_block("rootfs_data", mtd, sizeof(mtd))) {
+		ERROR("no rootfs_data was found\n");
+		return -1;
+	}
+
+	fp = fopen(mtd, "w");
+	LOG("%s - marking with deadc0de\n", mtd);
+	if (!fp) {
+		ERROR("opening %s failed\n", mtd);
+		return -1;
+	}
+
+	sz = fwrite(&deadc0de, sizeof(deadc0de), 1, fp);
+	fclose(fp);
+
+	if (sz != 1) {
+		ERROR("writing %s failed: %s\n", mtd, strerror(errno));
+		return -1;
+	}
+
+	return 0;
+ }
 static int main_switch2jffs(int argc, char **argv)
 {
 	char mtd[32];
@@ -602,6 +735,12 @@ int main(int argc, char **argv)
 	char mtd[32];
 
 	argv0 = basename(*argv);
+
+	if (!strcmp(basename(*argv), "jffs2mark"))
+		return main_jffs2mark(argc, argv);
+
+	if (!strcmp(basename(*argv), "jffs2reset"))
+		return main_jffs2reset(argc, argv);
 
 	if (!strcmp(basename(*argv), "switch2jffs"))
 		return main_switch2jffs(argc, argv);
