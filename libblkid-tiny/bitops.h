@@ -46,7 +46,7 @@
 		(uint64_t)(((uint64_t)(x) & (uint64_t)0xff00000000000000ULL) >> 56) ))
 
 
-#ifdef WORDS_BIGENDIAN
+#if __BYTE_ORDER == __BIG_ENDIAN
 
 #define cpu_to_le16(x) swab16(x)
 #define cpu_to_le32(x) swab32(x)
