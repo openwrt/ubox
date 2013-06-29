@@ -58,12 +58,14 @@ static struct vlist_tree mounts;
 static struct blob_buf b;
 static LIST_HEAD(devices);
 static int anon_mount, anon_swap, auto_mount, auto_swap;
+static unsigned int delay_root;
 
 enum {
 	CFG_ANON_MOUNT,
 	CFG_ANON_SWAP,
 	CFG_AUTO_MOUNT,
 	CFG_AUTO_SWAP,
+	CFG_DELAY_ROOT,
 	__CFG_MAX
 };
 
@@ -72,6 +74,7 @@ static const struct blobmsg_policy config_policy[__CFG_MAX] = {
 	[CFG_ANON_MOUNT] = { .name = "anon_mount", .type = BLOBMSG_TYPE_INT32 },
 	[CFG_AUTO_SWAP] = { .name = "auto_swap", .type = BLOBMSG_TYPE_INT32 },
 	[CFG_AUTO_MOUNT] = { .name = "auto_mount", .type = BLOBMSG_TYPE_INT32 },
+	[CFG_DELAY_ROOT] = { .name = "delay_root", .type = BLOBMSG_TYPE_INT32 },
 };
 
 enum {
@@ -214,6 +217,9 @@ static int global_add(struct uci_section *s)
 		auto_mount = 1;
 	if ((tb[CFG_AUTO_SWAP]) && blobmsg_get_u32(tb[CFG_AUTO_SWAP]))
 		auto_swap = 1;
+
+	if (tb[CFG_DELAY_ROOT])
+		delay_root = blobmsg_get_u32(tb[CFG_DELAY_ROOT]);
 
 	return 0;
 }
@@ -651,6 +657,12 @@ static int mount_extroot(char *cfg)
 		return -1;
 
 	pr = find_block_info(m->uuid, m->label, NULL);
+
+	if (!pr && delay_root){
+		fprintf(stderr, "extroot: is not ready yet, retrying in %ui seconds\n", delay_root);
+		sleep(delay_root);
+		pr = find_block_info(m->uuid, m->label, NULL);
+	}
 	if (pr) {
 		if (strncmp(pr->id->name, "ext", 3)) {
 			fprintf(stderr, "extroot: %s is not supported, try ext4\n", pr->id->name);
@@ -760,6 +772,7 @@ static int main_detect(int argc, char **argv)
 	printf("\toption\tanon_mount\t'0'\n");
 	printf("\toption\tauto_swap\t'1'\n");
 	printf("\toption\tauto_mount\t'1'\n\n");
+	printf("\toption\tdelay_root\t'0'\n\n");
 	list_for_each_entry(pr, &devices, list)
 		print_block_uci(pr);
 
