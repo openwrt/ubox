@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <sys/swap.h>
 #include <sys/mount.h>
+#include <sys/wait.h>
 
 #include <uci.h>
 #include <uci_blob.h>
@@ -57,7 +58,7 @@ struct mount {
 static struct vlist_tree mounts;
 static struct blob_buf b;
 static LIST_HEAD(devices);
-static int anon_mount, anon_swap, auto_mount, auto_swap;
+static int anon_mount, anon_swap, auto_mount, auto_swap, check_fs;
 static unsigned int delay_root;
 
 enum {
@@ -66,6 +67,7 @@ enum {
 	CFG_AUTO_MOUNT,
 	CFG_AUTO_SWAP,
 	CFG_DELAY_ROOT,
+	CFG_CHECK_FS,
 	__CFG_MAX
 };
 
@@ -75,6 +77,7 @@ static const struct blobmsg_policy config_policy[__CFG_MAX] = {
 	[CFG_AUTO_SWAP] = { .name = "auto_swap", .type = BLOBMSG_TYPE_INT32 },
 	[CFG_AUTO_MOUNT] = { .name = "auto_mount", .type = BLOBMSG_TYPE_INT32 },
 	[CFG_DELAY_ROOT] = { .name = "delay_root", .type = BLOBMSG_TYPE_INT32 },
+	[CFG_CHECK_FS] = { .name = "check_fs", .type = BLOBMSG_TYPE_INT32 },
 };
 
 enum {
@@ -220,6 +223,9 @@ static int global_add(struct uci_section *s)
 
 	if (tb[CFG_DELAY_ROOT])
 		delay_root = blobmsg_get_u32(tb[CFG_DELAY_ROOT]);
+
+	if ((tb[CFG_CHECK_FS]) && blobmsg_get_u32(tb[CFG_CHECK_FS]))
+		check_fs = 1;
 
 	return 0;
 }
@@ -431,6 +437,33 @@ static void mkdir_p(char *dir)
 	}
 }
 
+static void check_filesystem(struct blkid_struct_probe *pr)
+{
+	pid_t pid;
+	struct stat statbuf;
+	char *e2fsck = "/usr/sbin/e2fsck";
+
+	if (strncmp(pr->id->name, "ext", 3)) {
+		fprintf(stderr, "check_filesystem: %s is not supported\n", pr->id->name);
+		return;
+	}
+
+	if (stat(e2fsck, &statbuf) < 0)
+		return;
+
+	if (!(statbuf.st_mode & S_IXUSR))
+		return;
+
+	pid = fork();
+	if (!pid) {
+		execl(e2fsck, e2fsck, "-p", pr->dev, NULL);
+		exit(-1);
+	} else if (pid > 0) {
+		int status;
+		waitpid(pid, &status, 0);
+	}
+}
+
 static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 {
 	struct mount *m;
@@ -471,6 +504,10 @@ static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 			target = _target;
 		}
 		mkdir_p(target);
+
+		if (check_fs)
+			check_filesystem(pr);
+
 		err = mount(pr->dev, target, pr->id->name, 0, (m->options) ? (m->options) : (""));
 		if (err)
 			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
@@ -484,6 +521,10 @@ static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 
 		snprintf(target, sizeof(target), "/mnt/%s", device);
 		mkdir_p(target);
+
+		if (check_fs)
+			check_filesystem(pr);
+
 		err = mount(pr->dev, target, pr->id->name, 0, "");
 		if (err)
 			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
@@ -672,6 +713,9 @@ static int mount_extroot(char *cfg)
 			path = overlay;
 		mkdir_p(path);
 
+		if (check_fs)
+			check_filesystem(pr);
+
 		err = mount(pr->dev, path, pr->id->name, 0, (m->options) ? (m->options) : (""));
 
 		if (err) {
@@ -771,8 +815,9 @@ static int main_detect(int argc, char **argv)
 	printf("\toption\tanon_swap\t'0'\n");
 	printf("\toption\tanon_mount\t'0'\n");
 	printf("\toption\tauto_swap\t'1'\n");
-	printf("\toption\tauto_mount\t'1'\n\n");
-	printf("\toption\tdelay_root\t'0'\n\n");
+	printf("\toption\tauto_mount\t'1'\n");
+	printf("\toption\tdelay_root\t'0'\n");
+	printf("\toption\tcheck_fs\t'0'\n\n");
 	list_for_each_entry(pr, &devices, list)
 		print_block_uci(pr);
 
