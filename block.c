@@ -545,8 +545,10 @@ static char* find_mount_point(char *block)
 			char *p = &line[len + 1];
 			char *t = strstr(p, " ");
 
-			if (!t)
+			if (!t) {
+				fclose(fp);
 				return NULL;
+			}
 			*t = '\0';
 			point = p;
 			break;

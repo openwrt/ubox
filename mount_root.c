@@ -109,12 +109,16 @@ static char* find_mount(char *mp)
 	while (fgets(line, sizeof(line), fp)) {
 		char *s, *t = strstr(line, " ");
 
-		if (!t)
+		if (!t) {
+			fclose(fp);
 			return NULL;
+		}
 		t++;
 		s = strstr(t, " ");
-		if (!s)
+		if (!s) {
+			fclose(fp);
 			return NULL;
+		}
 		*s = '\0';
 
 		if (!strcmp(t, mp)) {
@@ -143,13 +147,16 @@ static char* find_mount_point(char *block, char *fs)
 			char *p = &line[len + 1];
 			char *t = strstr(p, " ");
 
-			if (!t)
+			if (!t) {
+				fclose(fp);
 				return NULL;
+			}
 
 			*t = '\0';
 			t++;
 
 			if (fs && strncmp(t, fs, strlen(fs))) {
+				fclose(fp);
 				ERROR("block is mounted with wrong fs\n");
 				return NULL;
 			}
