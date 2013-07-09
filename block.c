@@ -456,11 +456,10 @@ static void check_filesystem(struct blkid_struct_probe *pr)
 		return;
 	}
 
-	if (stat(e2fsck, &statbuf) < 0)
+	if (stat(e2fsck, &statbuf) < 0) {
+		fprintf(stderr, "check_filesystem: %s not found\n", e2fsck);
 		return;
-
-	if (!(statbuf.st_mode & S_IXUSR))
-		return;
+	}
 
 	pid = fork();
 	if (!pid) {
@@ -468,7 +467,10 @@ static void check_filesystem(struct blkid_struct_probe *pr)
 		exit(-1);
 	} else if (pid > 0) {
 		int status;
+
 		waitpid(pid, &status, 0);
+		if (WEXITSTATUS(status))
+			fprintf(stderr, "check_filesystem: %s returned %d\n", e2fsck, WEXITSTATUS(status));
 	}
 }
 
