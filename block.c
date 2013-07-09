@@ -137,6 +137,14 @@ static char *blobmsg_get_strdup(struct blob_attr *attr)
 	return strdup(blobmsg_get_string(attr));
 }
 
+static char *blobmsg_get_basename(struct blob_attr *attr)
+{
+	if (!attr)
+		return NULL;
+
+	return strdup(basename(blobmsg_get_string(attr)));
+}
+
 static int mount_add(struct uci_section *s)
 {
 	struct blob_attr *tb[__MOUNT_MAX] = { 0 };
@@ -158,7 +166,7 @@ static int mount_add(struct uci_section *s)
 	m->label = blobmsg_get_strdup(tb[MOUNT_LABEL]);
 	m->target = blobmsg_get_strdup(tb[MOUNT_TARGET]);
 	m->options = blobmsg_get_strdup(tb[MOUNT_OPTIONS]);
-	m->device = blobmsg_get_strdup(tb[MOUNT_DEVICE]);
+	m->device = blobmsg_get_basename(tb[MOUNT_DEVICE]);
 	m->overlay = m->extroot = 0;
 	if (m->target && !strcmp(m->target, "/"))
 		m->extroot = 1;
@@ -191,7 +199,7 @@ static int swap_add(struct uci_section *s)
 	memset(m, 0, sizeof(struct mount));
 	m->type = TYPE_SWAP;
 	m->uuid = blobmsg_get_strdup(tb[SWAP_UUID]);
-	m->device = blobmsg_get_strdup(tb[SWAP_DEVICE]);
+	m->device = blobmsg_get_basename(tb[SWAP_DEVICE]);
 	if (tb[SWAP_PRIO])
 		m->prio = blobmsg_get_u32(tb[SWAP_PRIO]);
 	if (m->prio)
