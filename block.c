@@ -344,6 +344,8 @@ static void cache_load(int mtd)
 		_cache_load("/dev/mtdblock*");
 	_cache_load("/dev/mmcblk*");
 	_cache_load("/dev/sd*");
+	_cache_load("/dev/sdc*");
+	_cache_load("/dev/hd*");
 }
 
 static int print_block_info(struct blkid_struct_probe *pr)
@@ -377,7 +379,7 @@ static int print_block_uci(struct blkid_struct_probe *pr)
 	if (pr->uuid[0])
 		printf("\toption\tuuid\t'%s'\n", pr->uuid);
 	else
-		printf("\toption\tdevice\t'%s'\n", basename(pr->dev));
+		printf("\toption\tdevice\t'%s'\n", pr->dev);
 	printf("\toption\tenabled\t'0'\n\n");
 
 	return 0;
