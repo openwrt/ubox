@@ -712,6 +712,8 @@ static int mount_extroot(char *cfg)
 	if (!pr && delay_root){
 		fprintf(stderr, "extroot: is not ready yet, retrying in %ui seconds\n", delay_root);
 		sleep(delay_root);
+		mkblkdev();
+		cache_load(0);
 		pr = find_block_info(m->uuid, m->label, NULL);
 	}
 	if (pr) {
