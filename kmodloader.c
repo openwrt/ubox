@@ -31,7 +31,9 @@
 #include <glob.h>
 #include <elf.h>
 
-#include <libubox/list.h>
+#include <libubox/avl.h>
+#include <libubox/avl-cmp.h>
+#include <libubox/utils.h>
 
 #define DEF_MOD_PATH "/lib/modules/%s/"
 
@@ -43,7 +45,7 @@ enum {
 };
 
 struct module {
-	struct list_head list;
+	struct avl_node avl;
 
 	char *name;
 	char *depends;
@@ -53,36 +55,20 @@ struct module {
 	int state;
 };
 
-static LIST_HEAD(modules);
+static struct avl_tree modules;
 
-static struct module* find_module(char *name)
+static struct module *find_module(const char *name)
 {
-	struct module *m = NULL;
-
-	list_for_each_entry(m, &modules, list)
-		if (!strcmp(m->name, name))
-			return m;
-	return NULL;
-}
-
-static void free_module(struct module *m)
-{
-	if (m->name)
-		free(m->name);
-	if (m->depends)
-		free(m->depends);
-	free(m);
+	struct module *m;
+	return avl_find_element(&modules, name, m, avl);
 }
 
 static void free_modules(void)
 {
-	struct list_head *p, *n;
+	struct module *m, *tmp;
 
-	list_for_each_safe(p, n, &modules) {
-		struct module *m = container_of(p, struct module, list);
-		list_del(p);
-		free_module(m);
-	}
+	avl_remove_all_elements(&modules, m, avl, tmp)
+		free(m);
 }
 
 static char* get_module_path(char *name)
@@ -182,6 +168,27 @@ static int elf_find_section(char *map, const char *section, unsigned int *offset
 }
 #endif
 
+static struct module *
+alloc_module(const char *name, const char *depends, int size)
+{
+	struct module *m;
+	char *_name, *_dep;
+
+	m = calloc_a(sizeof(*m),
+		&_name, strlen(name) + 1,
+		&_dep, depends ? strlen(depends) + 1 : 0);
+	if (!m)
+		return NULL;
+
+	m->avl.key = m->name = strcpy(_name, name);
+	if (depends)
+		m->depends = strcpy(_dep, depends);
+
+	m->size = size;
+	avl_insert(&modules, &m->avl);
+	return m;
+}
+
 static int scan_loaded_modules(void)
 {
 	FILE *fp = fopen("/proc/modules", "r");
@@ -204,27 +211,19 @@ static int scan_loaded_modules(void)
 		if (!m.name || !m.depends)
 			continue;
 
-		n = malloc(sizeof(struct module));
-		if (!n)
-			continue;
-
-		n->name = strdup(m.name);
-		n->depends = strdup(m.depends);
-		n->size = m.size;
+		n = alloc_module(m.name, m.depends, m.size);
 		n->usage = m.usage;
 		n->state = LOADED;
-
-		list_add_tail(&n->list, &modules);
 	}
 
 	return 0;
 }
 
-static struct module* get_module_info(char *module)
+static struct module* get_module_info(const char *module, const char *name)
 {
 	int fd = open(module, O_RDONLY);
 	unsigned int offset, size;
-	char *map, *strings;
+	char *map, *strings, *dep = NULL;
 	struct module *m;
 	struct stat s;
 
@@ -250,12 +249,6 @@ static struct module* get_module_info(char *module)
 	}
 
 	strings = map + offset;
-	m = malloc(sizeof(struct module));
-	if (!m)
-		return NULL;
-
-	memset(m, 0, sizeof(struct module));
-	m->size = s.st_size;
 	while (strings && (strings < map + offset + size)) {
 		char *sep;
 		int len;
@@ -268,9 +261,13 @@ static struct module* get_module_info(char *module)
 		len = sep - strings;
 		sep++;
 		if (!strncmp(strings, "depends=", len + 1))
-			m->depends = strdup(sep);
+			dep = sep;
 		strings = &sep[strlen(sep)];
 	}
+
+	m = alloc_module(name, dep, s.st_size);
+	if (!m)
+		return NULL;
 
 	m->state = SCANNED;
 
@@ -294,11 +291,8 @@ static int scan_module_folder(char *dir)
 			continue;
 
 		m = find_module(name);
-		if (!m) {
-			m = get_module_info(gl.gl_pathv[j]);
-			m->name = strdup(name);
-			list_add_tail(&m->list, &modules);
-		}
+		if (!m)
+			get_module_info(gl.gl_pathv[j], name);
 	}
 
 	globfree(&gl);
@@ -422,7 +416,7 @@ static int load_depmod(void)
 	do {
 		loaded = 0;
 		todo = 0;
-		list_for_each_entry(m, &modules, list) {
+		avl_for_each_element(&modules, m, avl) {
 			if ((m->state == PROBE) && (!deps_available(m))) {
 				if (!insert_module(get_module_path(m->name), "")) {
 					m->state = LOADED;
@@ -526,7 +520,7 @@ static int main_lsmod(int argc, char **argv)
 	if (scan_loaded_modules())
 		return -1;
 
-	list_for_each_entry(m, &modules, list)
+	avl_for_each_element(&modules, m, avl)
 		if (m->state == LOADED)
 			printf("%-20s%8d%3d %s\n",
 				m->name, m->size, m->usage,
@@ -651,6 +645,7 @@ int main(int argc, char **argv)
 {
 	char *exec = basename(*argv);
 
+	avl_init(&modules, avl_strcmp, false, NULL);
 	if (!strcmp(exec, "insmod"))
 		return main_insmod(argc, argv);
 
