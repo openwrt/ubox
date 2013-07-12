@@ -191,15 +191,17 @@ alloc_module(const char *name, const char *depends, int size)
 
 static int scan_loaded_modules(void)
 {
-	FILE *fp = fopen("/proc/modules", "r");
-	char buf[256];
+	size_t buf_len = 0;
+	char *buf = NULL;
+	FILE *fp;
 
+	fp = fopen("/proc/modules", "r");
 	if (!fp) {
 		fprintf(stderr, "failed to open /proc/modules\n");
 		return -1;
 	}
 
-	while (fgets(buf, sizeof(buf), fp)) {
+	while (getline(&buf, &buf_len, fp) > 0) {
 		struct module m;
 		struct module *n;
 
@@ -215,6 +217,8 @@ static int scan_loaded_modules(void)
 		n->usage = m.usage;
 		n->state = LOADED;
 	}
+	free(buf);
+	fclose(fp);
 
 	return 0;
 }
@@ -452,9 +456,8 @@ static int print_usage(char *arg)
 
 static int main_insmod(int argc, char **argv)
 {
-	char options[256] = "";
-	char *name;
-	int i;
+	char *name, *cur, *options;
+	int i, ret, len;
 
 	if (argc < 2)
 		return print_insmod_usage();
@@ -476,13 +479,24 @@ static int main_insmod(int argc, char **argv)
 
 	free_modules();
 
-	for (i = 2; i < argc; i++)
-		if (snprintf(options, sizeof(options), "%s %s", options, argv[i]) >= sizeof(options)) {
-			fprintf(stderr, "argument line too long - %s\n", options);
-			return -1;
-		}
+	for (len = 0, i = 2; i < argc; i++)
+		len += strlen(argv[i]) + 1;
 
-	return insert_module(get_module_path(name), options);
+	options = malloc(len);
+	options[0] = 0;
+	cur = options;
+	for (i = 2; i < argc; i++) {
+		if (options[0]) {
+			*cur = ' ';
+			cur++;
+		}
+		cur += sprintf(cur, "%s", argv[i]);
+	}
+
+	ret = insert_module(get_module_path(name), options);
+	free(options);
+
+	return ret;
 }
 
 static int main_rmmod(int argc, char **argv)
@@ -553,7 +567,7 @@ static int main_depmod(int argc, char **argv)
 {
 	struct utsname ver;
 	struct module *m;
-	char path[128];
+	char *path;
 	char *name;
 
 	if (argc != 2)
@@ -563,6 +577,7 @@ static int main_depmod(int argc, char **argv)
 		return -1;
 
 	uname(&ver);
+	path = alloca(sizeof(DEF_MOD_PATH "*.ko") + strlen(ver.release) + 1);
 	snprintf(path, sizeof(path), DEF_MOD_PATH "*.ko", ver.release);
 
 	scan_module_folder(path);
@@ -608,14 +623,15 @@ static int main_loader(int argc, char **argv)
 
 	for (j = 0; j < gl.gl_pathc; j++) {
 		FILE *fp = fopen(gl.gl_pathv[j], "r");
-		char mod[256];
+		size_t mod_len = 0;
+		char *mod = NULL;
 
 		if (!fp) {
 			fprintf(stderr, "failed to open %s\n", gl.gl_pathv[j]);
 			continue;
 		}
 
-		while (fgets(mod, sizeof(mod), fp)) {
+		while (getline(&mod, &mod_len, fp) > 0) {
 			char *nl = strchr(mod, '\n');
 			struct module *m;
 			char *opts;
@@ -632,6 +648,7 @@ static int main_loader(int argc, char **argv)
 				continue;
 			insert_module(get_module_path(mod), (opts) ? (opts) : (""));
 		}
+		free(mod);
 		fclose(fp);
 	}
 
