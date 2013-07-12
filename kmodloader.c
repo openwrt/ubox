@@ -590,6 +590,7 @@ static int main_loader(int argc, char **argv)
 	char *dir = "/etc/modules.d/*";
 	glob_t gl;
 	char *path;
+	int j;
 
 	if (argc > 1)
 		dir = argv[1];
@@ -602,39 +603,39 @@ static int main_loader(int argc, char **argv)
 
 	syslog(0, "kmodloader: loading kernel modules from %s\n", path);
 
-	if (glob(path, gl_flags, NULL, &gl) >= 0) {
-		int j;
+	if (glob(path, gl_flags, NULL, &gl) < 0)
+		goto out;
 
-		for (j = 0; j < gl.gl_pathc; j++) {
-			FILE *fp = fopen(gl.gl_pathv[j], "r");
+	for (j = 0; j < gl.gl_pathc; j++) {
+		FILE *fp = fopen(gl.gl_pathv[j], "r");
+		char mod[256];
 
-			if (!fp) {
-				fprintf(stderr, "failed to open %s\n", gl.gl_pathv[j]);
-			} else {
-				char mod[256];
-
-				while (fgets(mod, sizeof(mod), fp)) {
-					char *nl = strchr(mod, '\n');
-					struct module *m;
-					char *opts;
-
-					if (nl)
-						*nl = '\0';
-
-					opts = strchr(mod, ' ');
-					if (opts)
-						*opts++ = '\0';
-
-					m = find_module(get_module_name(mod));
-					if (m)
-						continue;
-					insert_module(get_module_path(mod), (opts) ? (opts) : (""));
-				}
-				fclose(fp);
-			}
+		if (!fp) {
+			fprintf(stderr, "failed to open %s\n", gl.gl_pathv[j]);
+			continue;
 		}
+
+		while (fgets(mod, sizeof(mod), fp)) {
+			char *nl = strchr(mod, '\n');
+			struct module *m;
+			char *opts;
+
+			if (nl)
+				*nl = '\0';
+
+			opts = strchr(mod, ' ');
+			if (opts)
+				*opts++ = '\0';
+
+			m = find_module(get_module_name(mod));
+			if (m)
+				continue;
+			insert_module(get_module_path(mod), (opts) ? (opts) : (""));
+		}
+		fclose(fp);
 	}
 
+out:
 	globfree(&gl);
 	free(path);
 
