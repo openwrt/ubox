@@ -578,7 +578,7 @@ static int main_depmod(int argc, char **argv)
 
 	uname(&ver);
 	path = alloca(sizeof(DEF_MOD_PATH "*.ko") + strlen(ver.release) + 1);
-	snprintf(path, sizeof(path), DEF_MOD_PATH "*.ko", ver.release);
+	sprintf(path, DEF_MOD_PATH "*.ko", ver.release);
 
 	scan_module_folder(path);
 
