@@ -327,7 +327,7 @@ static int _cache_load(const char *path)
 		struct blkid_struct_probe *pr = malloc(sizeof(struct blkid_struct_probe));
 		memset(pr, 0, sizeof(struct blkid_struct_probe));
 		probe_block(gl.gl_pathv[j], pr);
-		if (pr->err)
+		if (pr->err || !pr->id)
 			free(pr);
 		else
 			list_add_tail(&pr->list, &devices);
