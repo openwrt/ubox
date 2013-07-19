@@ -481,10 +481,12 @@ static void check_filesystem(struct blkid_struct_probe *pr)
 static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 {
 	struct mount *m;
-	char *device = basename(pr->dev);
+	char *device;
 
 	if (!pr)
 		return -1;
+
+	device = basename(pr->dev);
 
 	if (!strcmp(pr->id->name, "swap")) {
 		if (hotplug && !auto_swap)
