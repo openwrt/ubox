@@ -346,6 +346,8 @@ static void cache_load(int mtd)
 	_cache_load("/dev/sd*");
 	_cache_load("/dev/sdc*");
 	_cache_load("/dev/hd*");
+	_cache_load("/dev/md*");
+	_cache_load("/dev/mapper/*");
 }
 
 static int print_block_info(struct blkid_struct_probe *pr)
