@@ -43,7 +43,7 @@ struct squashfs_super_block {
 static int probe_squashfs(blkid_probe pr, const struct blkid_idmag *mag)
 {
 	md5_ctx_t ctx = { 0 };
-	uint8_t md5[4];
+	uint32_t md5[4];
 	struct squashfs_super_block *sq;
 
 	sq = blkid_probe_get_sb(pr, mag, struct squashfs_super_block);
@@ -62,7 +62,7 @@ static int probe_squashfs(blkid_probe pr, const struct blkid_idmag *mag)
 	md5_begin(&ctx);
 	md5_hash(sq, sizeof(*sq), &ctx);
 	md5_end(&md5, &ctx);
-	blkid_probe_sprintf_uuid(pr, NULL, 4, "%02x%02x-%02x%02x",
+	blkid_probe_sprintf_uuid(pr, NULL, 4, "%08x-%08x-%08x-%08x",
 			md5[3], md5[2], md5[1], md5[0]);
 	return 0;
 }
