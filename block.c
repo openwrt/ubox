@@ -513,7 +513,7 @@ static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 
 	if (m) {
 		char *target = m->target;
-		char _target[] = "/mnt/mmcblk123";
+		char _target[32];
 		int err = 0;
 
 		if (!target) {
@@ -804,7 +804,7 @@ static int main_mount(int argc, char **argv)
 	if (config_load(NULL))
 		return -1;
 
-	cache_load(0);
+	cache_load(1);
 	list_for_each_entry(pr, &devices, list)
 		mount_device(pr, 0);
 
