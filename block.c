@@ -12,6 +12,7 @@
  * GNU General Public License for more details.
  */
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <unistd.h>
 #include <syslog.h>
@@ -877,11 +878,25 @@ static int main_info(int argc, char **argv)
 static int main_swapon(int argc, char **argv)
 {
 	if (argc != 2) {
-		fprintf(stderr, "Usage: swapoff [-a] [DEVICE]\n\nStop swapping on DEVICE\n\n\t-a      Stop swapping on all swap devices\n");
+		fprintf(stderr, "Usage: swapon <-s> <-a> [DEVICE]\n\n\tStart swapping on [DEVICE]\n -a\tStart swapping on all swap devices\n -s\tShow summary\n");
 		return -1;
 	}
 
-	if (!strcmp(argv[1], "-a")) {
+	if (!strcmp(argv[1], "-s")) {
+		FILE *fp = fopen("/proc/swaps", "r");
+		char *lineptr = NULL;
+		size_t s;
+
+		if (!fp) {
+			fprintf(stderr, "failed to open /proc/swaps\n");
+			return -1;
+		}
+		while (getline(&lineptr, &s, fp) > 0)
+			printf(lineptr);
+		if (lineptr)
+			free(lineptr);
+		fclose(fp);
+	} else if (!strcmp(argv[1], "-a")) {
 		struct blkid_struct_probe *pr;
 
 		cache_load(0);
