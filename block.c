@@ -927,7 +927,7 @@ static int main_swapon(int argc, char **argv)
 static int main_swapoff(int argc, char **argv)
 {
 	if (argc != 2) {
-		fprintf(stderr, "Usage: swapoff [-a] [DEVICE]\n\nStop swapping on DEVICE\n\n\t-a      Stop swapping on all swap devices\n");
+		fprintf(stderr, "Usage: swapoff [-a] [DEVICE]\n\n\tStop swapping on DEVICE\n -a\tStop swapping on all swap devices\n");
 		return -1;
 	}
 
