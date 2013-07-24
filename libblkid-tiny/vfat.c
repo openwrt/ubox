@@ -273,6 +273,16 @@ static int fat_valid_superblock(const struct blkid_idmag *mag,
 static struct vfat_super_block vs;
 static struct msdos_super_block ms;
 
+static int set_label(blkid_probe pr, unsigned char *vol_label)
+{
+	unsigned char *c;
+
+	for (c = vol_label + 10; c > vol_label && *c == ' '; c--)
+		*c = 0;
+
+	return blkid_probe_set_label(pr, vol_label, 11);
+}
+
 /* FAT label extraction from the root directory taken from Kay
  * Sievers's volume_id library */
 static int probe_vfat(blkid_probe pr, const struct blkid_idmag *mag)
@@ -396,7 +406,7 @@ static int probe_vfat(blkid_probe pr, const struct blkid_idmag *mag)
 	}
 
 	if (vol_label && memcmp(vol_label, no_name, 11))
-		blkid_probe_set_label(pr, (unsigned char *) vol_label, 11);
+		set_label(pr, (unsigned char *) vol_label);
 
 	/* We can't just print them as %04X, because they are unaligned */
 	if (vol_serno)
