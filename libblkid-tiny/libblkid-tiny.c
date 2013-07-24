@@ -13,6 +13,7 @@
 int blkid_debug_mask = 0;
 
 static unsigned char *probe_buffer;
+static unsigned int probe_buffer_size = 0;
 
 int get_linux_version (void)
 {
@@ -80,16 +81,23 @@ unsigned char *blkid_probe_get_buffer(blkid_probe pr,
 				blkid_loff_t off, blkid_loff_t len)
 {
 	int ret;
+	unsigned char *buf;
 
-	if (len > 4096) {
-		fprintf(stderr, "probe buffer too small %d\n", (int) len);
-		return NULL;
+	if (len > probe_buffer_size) {
+		buf = realloc(probe_buffer, len);
+
+		if (!buf) {
+			fprintf(stderr, "failed to allocate %d byte buffer\n",
+			        (int)len);
+
+			return NULL;
+		}
+
+		probe_buffer = buf;
+		probe_buffer_size = len;
 	}
 
-	if (!probe_buffer) {
-		probe_buffer = malloc(4096);
-		memset(probe_buffer, 0, 4096);
-	}
+	memset(probe_buffer, 0, probe_buffer_size);
 
 	lseek(pr->fd, off, SEEK_SET);
 	ret = read(pr->fd, probe_buffer, len);
