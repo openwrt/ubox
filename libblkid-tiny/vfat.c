@@ -385,8 +385,6 @@ static int probe_vfat(blkid_probe pr, const struct blkid_idmag *mag)
 				return -1;
 
 			fsinfo = (struct fat32_fsinfo *) buf;
-			*fsinfo->signature1 = le32_to_cpu(*fsinfo->signature1);
-			*fsinfo->signature2 = le32_to_cpu(*fsinfo->signature2);
 			if (memcmp(fsinfo->signature1, "\x52\x52\x61\x41", 4) != 0 &&
 			    memcmp(fsinfo->signature1, "\x52\x52\x64\x41", 4) != 0 &&
 			    memcmp(fsinfo->signature1, "\x00\x00\x00\x00", 4) != 0)
