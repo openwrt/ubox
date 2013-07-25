@@ -277,8 +277,11 @@ static int set_label(blkid_probe pr, unsigned char *vol_label)
 {
 	unsigned char *c;
 
-	for (c = vol_label + 10; c > vol_label && *c == ' '; c--)
+	for (c = vol_label + 10; c >= vol_label && *c == ' '; c--)
 		*c = 0;
+
+	if (!*vol_label)
+		return 0;
 
 	return blkid_probe_set_label(pr, vol_label, 11);
 }
