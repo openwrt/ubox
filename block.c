@@ -910,8 +910,8 @@ static int main_swapon(int argc, char **argv)
 		struct stat s;
 		int err;
 
-		if (stat(argv[1], &s) || !S_ISBLK(s.st_mode)) {
-			fprintf(stderr, "%s is not a block device\n", argv[1]);
+		if (stat(argv[1], &s) || (!S_ISBLK(s.st_mode) && !S_ISREG(s.st_mode))) {
+			fprintf(stderr, "%s is not a block device or file\n", argv[1]);
 			return -1;
 		}
 		err = swapon(argv[1], 0);
@@ -956,8 +956,8 @@ static int main_swapoff(int argc, char **argv)
 		struct stat s;
 		int err;
 
-		if (stat(argv[1], &s) || !S_ISBLK(s.st_mode)) {
-			fprintf(stderr, "%s is not a block device\n", argv[1]);
+		if (stat(argv[1], &s) || (!S_ISBLK(s.st_mode) && !S_ISREG(s.st_mode))) {
+			fprintf(stderr, "%s is not a block device or file\n", argv[1]);
 			return -1;
 		}
 		err = swapoff(argv[1]);
