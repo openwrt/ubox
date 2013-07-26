@@ -718,6 +718,8 @@ static int extroot(const char *prefix)
 					ERROR("switching to pivotroot failed - continue normal boot\n");
 					umount("/mnt");
 				} else {
+					umount("/tmp/overlay");
+					rmdir("/tmp/overlay");
 					rmdir("/tmp/extroot/mnt");
 					rmdir("/tmp/extroot");
 					return 0;
