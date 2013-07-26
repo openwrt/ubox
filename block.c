@@ -717,7 +717,7 @@ static int mount_extroot(char *cfg)
 	pr = find_block_info(m->uuid, m->label, NULL);
 
 	if (!pr && delay_root){
-		fprintf(stderr, "extroot: is not ready yet, retrying in %ui seconds\n", delay_root);
+		fprintf(stderr, "extroot: is not ready yet, retrying in %u seconds\n", delay_root);
 		sleep(delay_root);
 		mkblkdev();
 		cache_load(0);
@@ -835,7 +835,7 @@ static int main_detect(int argc, char **argv)
 	printf("\toption\tanon_mount\t'0'\n");
 	printf("\toption\tauto_swap\t'1'\n");
 	printf("\toption\tauto_mount\t'1'\n");
-	printf("\toption\tdelay_root\t'0'\n");
+	printf("\toption\tdelay_root\t'5'\n");
 	printf("\toption\tcheck_fs\t'0'\n\n");
 	list_for_each_entry(pr, &devices, list)
 		print_block_uci(pr);
