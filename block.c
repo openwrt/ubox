@@ -663,7 +663,7 @@ static int check_extroot(char *path)
 		if (!strcmp(pr->dev, fs)) {
 			struct stat s;
 			FILE *fp = NULL;
-			char tag[32];
+			char tag[64];
 			char uuid[32] = { 0 };
 
 			snprintf(tag, sizeof(tag), "%s/etc/.extroot-uuid", path);
@@ -697,8 +697,8 @@ static int check_extroot(char *path)
 
 static int mount_extroot(char *cfg)
 {
-	char overlay[] = "/tmp/overlay";
-	char mnt[] = "/tmp/mnt";
+	char overlay[] = "/tmp/extroot/overlay";
+	char mnt[] = "/tmp/extroot/mnt";
 	char *path = mnt;
 	struct blkid_struct_probe *pr;
 	struct mount *m;
