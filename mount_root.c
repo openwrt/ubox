@@ -677,50 +677,63 @@ static int main_switch2jffs(int argc, char **argv)
 	return ret;
 }
 
-static int extroot(void)
+static int extroot(const char *prefix)
 {
+	char block_path[32];
+	char kmod_loader[64];
 	struct stat s;
 	pid_t pid;
 
-	if (stat("/sbin/block", &s))
+	sprintf(block_path, "%s/sbin/block", prefix);
+
+	if (stat(block_path, &s))
 		return -1;
+
+	sprintf(kmod_loader, "/sbin/kmodloader %s/etc/modules-boot.d/ %s", prefix, prefix);
+	system(kmod_loader);
 
 	pid = fork();
 	if (!pid) {
 		mkdir("/tmp/extroot", 0755);
-		execl("/sbin/block", "/sbin/block", "extroot", NULL);
+		execl(block_path, block_path, "extroot", NULL);
 		exit(-1);
 	} else if (pid > 0) {
 		int status;
 
 		waitpid(pid, &status, 0);
 		if (!WEXITSTATUS(status)) {
-			if (find_mount("/tmp/mnt")) {
+			if (find_mount("/tmp/extroot/mnt")) {
 				mount("/dev/root", "/", NULL, MS_NOATIME | MS_REMOUNT | MS_RDONLY, 0);
 
-				mkdir("/tmp/mnt/proc", 0755);
-				mkdir("/tmp/mnt/dev", 0755);
-				mkdir("/tmp/mnt/sys", 0755);
-				mkdir("/tmp/mnt/tmp", 0755);
-				mkdir("/tmp/mnt/rom", 0755);
+				mkdir("/tmp/extroot/mnt/proc", 0755);
+				mkdir("/tmp/extroot/mnt/dev", 0755);
+				mkdir("/tmp/extroot/mnt/sys", 0755);
+				mkdir("/tmp/extroot/mnt/tmp", 0755);
+				mkdir("/tmp/extroot/mnt/rom", 0755);
 
-				if (mount_move("/tmp", "", "/mnt")) {
+				if (mount_move("/tmp/extroot", "", "/mnt")) {
 					ERROR("moving pivotroot failed - continue normal boot\n");
-					umount("/tmp/mnt");
+					umount("/tmp/extroot/mnt");
 				} else if (pivot("/mnt", "/rom")) {
 					ERROR("switching to pivotroot failed - continue normal boot\n");
 					umount("/mnt");
 				} else {
+					rmdir("/tmp/extroot/mnt");
+					rmdir("/tmp/extroot");
 					return 0;
 				}
-			} else if (find_mount("/tmp/overlay")) {
-				if (mount_move("/tmp", "", "/overlay")) {
+			} else if (find_mount("/tmp/extroot/overlay")) {
+				if (mount_move("/tmp/extroot", "", "/overlay")) {
 					ERROR("moving extroot failed - continue normal boot\n");
-					umount("/tmp/overlay");
+					umount("/tmp/extroot/overlay");
 				} else if (fopivot("/overlay", "/rom")) {
 					ERROR("switching to extroot failed - continue normal boot\n");
 					umount("/overlay");
 				} else {
+					umount("/tmp/overlay");
+					rmdir("/tmp/overlay");
+					rmdir("/tmp/extroot/overlay");
+					rmdir("/tmp/extroot");
 					return 0;
 				}
 			}
@@ -754,7 +767,7 @@ int main(int argc, char **argv)
 		LOG("mounting /dev/root\n");
 		mount("/dev/root", "/", NULL, MS_NOATIME | MS_REMOUNT, 0);
 	} else {
-		if (!extroot()) {
+		if (!extroot("")) {
 			fprintf(stderr, "mount_root: switched to extroot\n");
 			return 0;
 		}
@@ -773,6 +786,12 @@ int main(int argc, char **argv)
 			}
 
 			mtd_mount_jffs2();
+
+			if (!extroot("/tmp/overlay")) {
+				fprintf(stderr, "mount_root: switched to extroot\n");
+				return 0;
+			}
+
 			DEBUG(1, "switching to jffs2\n");
 			if (mount_move("/tmp", "", "/overlay") || fopivot("/overlay", "/rom")) {
 				ERROR("switching to jffs2 failed - fallback to ramoverlay\n");
