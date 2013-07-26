@@ -56,6 +56,7 @@ struct module {
 };
 
 static struct avl_tree modules;
+static char *prefix = "";
 
 static struct module *find_module(const char *name)
 {
@@ -82,7 +83,7 @@ static char* get_module_path(char *name)
 		return name;
 
 	uname(&ver);
-	snprintf(path, 256, DEF_MOD_PATH "%s.ko", ver.release, name);
+	snprintf(path, 256, "%s" DEF_MOD_PATH "%s.ko", prefix, ver.release, name);
 
 	if (!stat(path, &s))
 		return path;
@@ -94,7 +95,7 @@ static char* get_module_path(char *name)
 		t++;
 	}
 
-	snprintf(path, 256, DEF_MOD_PATH "%s.ko", ver.release, name);
+	snprintf(path, 256, "%s" DEF_MOD_PATH "%s.ko", prefix, ver.release, name);
 
 	if (!stat(path, &s))
 		return path;
@@ -609,6 +610,9 @@ static int main_loader(int argc, char **argv)
 
 	if (argc > 1)
 		dir = argv[1];
+
+	if (argc > 2)
+		prefix = argv[2];
 
 	path = malloc(strlen(dir) + 2);
 	strcpy(path, dir);
