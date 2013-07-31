@@ -664,7 +664,7 @@ static int check_extroot(char *path)
 			struct stat s;
 			FILE *fp = NULL;
 			char tag[64];
-			char uuid[32] = { 0 };
+			char uuid[64] = { 0 };
 
 			snprintf(tag, sizeof(tag), "%s/etc/.extroot-uuid", path);
 			if (stat(tag, &s)) {
