@@ -599,8 +599,6 @@ static void handle_swapfiles(bool on)
 		if (m->type != TYPE_SWAP || !m->target)
 			continue;
 
-		fprintf(stderr, "swapfile: %s\n", m->target);
-
 		if (stat(m->target, &s) || !S_ISREG(s.st_mode))
 			continue;
 
@@ -608,8 +606,6 @@ static void handle_swapfiles(bool on)
 
 		if (!pr)
 			continue;
-
-		fprintf(stderr, "probe: %p\n", pr);
 
 		if (!strcmp(pr->id->name, "swap")) {
 			if (on)
