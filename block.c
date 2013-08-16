@@ -295,8 +295,12 @@ static int swap_add(struct uci_section *s)
 	if (m->prio)
 		m->prio = ((m->prio << SWAP_FLAG_PRIO_SHIFT) & SWAP_FLAG_PRIO_MASK) | SWAP_FLAG_PREFER;
 
-	if ((!tb[SWAP_ENABLE]) || blobmsg_get_u32(tb[SWAP_ENABLE]))
+	if ((!tb[SWAP_ENABLE]) || blobmsg_get_u32(tb[SWAP_ENABLE])) {
+		/* store complete swap path */
+		if (tb[SWAP_DEVICE])
+			m->target = blobmsg_get_strdup(tb[SWAP_DEVICE]);
 		vlist_add(&mounts, &m->node, (m->uuid) ? (m->uuid) : (m->device));
+	}
 
 	return 0;
 }
@@ -404,6 +408,26 @@ static int config_load(char *cfg)
 	return 0;
 }
 
+static struct blkid_struct_probe* _probe_path(char *path)
+{
+	struct blkid_struct_probe *pr;
+
+	pr = malloc(sizeof(*pr));
+
+	if (!pr)
+		return NULL;
+
+	memset(pr, 0, sizeof(*pr));
+	probe_block(path, pr);
+
+	if (pr->err || !pr->id) {
+		free(pr);
+		return NULL;
+	}
+
+	return pr;
+}
+
 static int _cache_load(const char *path)
 {
 	int gl_flags = GLOB_NOESCAPE | GLOB_MARK;
@@ -414,12 +438,8 @@ static int _cache_load(const char *path)
 		return -1;
 
 	for (j = 0; j < gl.gl_pathc; j++) {
-		struct blkid_struct_probe *pr = malloc(sizeof(struct blkid_struct_probe));
-		memset(pr, 0, sizeof(struct blkid_struct_probe));
-		probe_block(gl.gl_pathv[j], pr);
-		if (pr->err || !pr->id)
-			free(pr);
-		else
+		struct blkid_struct_probe *pr = _probe_path(gl.gl_pathv[j]);
+		if (pr)
 			list_add_tail(&pr->list, &devices);
 	}
 
@@ -568,6 +588,40 @@ static void check_filesystem(struct blkid_struct_probe *pr)
 	}
 }
 
+static void handle_swapfiles(bool on)
+{
+	struct stat s;
+	struct mount *m;
+	struct blkid_struct_probe *pr;
+
+	vlist_for_each_element(&mounts, m, node)
+	{
+		if (m->type != TYPE_SWAP || !m->target)
+			continue;
+
+		fprintf(stderr, "swapfile: %s\n", m->target);
+
+		if (stat(m->target, &s) || !S_ISREG(s.st_mode))
+			continue;
+
+		pr = _probe_path(m->target);
+
+		if (!pr)
+			continue;
+
+		fprintf(stderr, "probe: %p\n", pr);
+
+		if (!strcmp(pr->id->name, "swap")) {
+			if (on)
+				swapon(pr->dev, m->prio);
+			else
+				swapoff(pr->dev);
+		}
+
+		free(pr);
+	}
+}
+
 static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 {
 	struct mount *m;
@@ -619,6 +673,8 @@ static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 		if (err)
 			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
 					pr->dev, pr->id->name, target, err, strerror(err));
+		else
+			handle_swapfiles(true);
 		return err;
 	}
 
@@ -636,6 +692,8 @@ static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 		if (err)
 			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
 					pr->dev, pr->id->name, target, err, strerror(err));
+		else
+			handle_swapfiles(true);
 		return err;
 	}
 
@@ -907,6 +965,8 @@ static int main_umount(int argc, char **argv)
 
 	if (config_load(NULL))
 		return -1;
+
+	handle_swapfiles(false);
 
 	cache_load(0);
 	list_for_each_entry(pr, &devices, list)
