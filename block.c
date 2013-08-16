@@ -47,6 +47,7 @@ struct mount {
 	char *target;
 	char *path;
 	char *options;
+	uint32_t flags;
 	char *uuid;
 	char *label;
 	char *device;
@@ -130,6 +131,46 @@ static const struct uci_blob_param_list swap_attr_list = {
 	.params = swap_policy,
 };
 
+struct mount_flag {
+	const char *name;
+	int32_t flag;
+};
+
+#ifndef MS_DIRSYNC
+#	define MS_DIRSYNC		(1 << 7)
+#endif
+
+#ifndef MS_RELATIME
+#	define MS_RELATIME		(1 << 21)
+#endif
+
+#ifndef MS_STRICTATIME
+#	define MS_STRICTATIME	(1 << 24)
+#endif
+
+static const struct mount_flag mount_flags[] = {
+	{ "sync",			MS_SYNCHRONOUS	},
+	{ "async",			~MS_SYNCHRONOUS	},
+	{ "dirsync", 		MS_DIRSYNC		},
+	{ "mand",			MS_MANDLOCK		},
+	{ "nomand",			~MS_MANDLOCK	},
+	{ "atime",			~MS_NOATIME		},
+	{ "noatime",		MS_NOATIME		},
+	{ "dev",			~MS_NODEV		},
+	{ "nodev",			MS_NODEV		},
+	{ "diratime",		~MS_NODIRATIME	},
+	{ "nodiratime",		MS_NODIRATIME	},
+	{ "exec",			~MS_NOEXEC		},
+	{ "noexec",			MS_NOEXEC		},
+	{ "suid",			~MS_NOSUID		},
+	{ "nosuid",			MS_NOSUID		},
+	{ "rw",				~MS_RDONLY		},
+	{ "ro",				MS_RDONLY		},
+	{ "relatime",		MS_RELATIME		},
+	{ "norelatime",		~MS_RELATIME	},
+	{ "strictatime",	MS_STRICTATIME	},
+};
+
 static char *blobmsg_get_strdup(struct blob_attr *attr)
 {
 	if (!attr)
@@ -144,6 +185,52 @@ static char *blobmsg_get_basename(struct blob_attr *attr)
 		return NULL;
 
 	return strdup(basename(blobmsg_get_string(attr)));
+}
+
+static void parse_mount_options(struct mount *m, char *optstr)
+{
+	int i;
+	bool is_flag;
+	char *p, *opts, *last;
+
+	m->flags = 0;
+	m->options = NULL;
+
+	if (!optstr || !*optstr)
+		return;
+
+	m->options = opts = calloc(1, strlen(optstr) + 1);
+
+	if (!m->options)
+		return;
+
+	p = last = optstr;
+
+	do {
+		p = strchr(p, ',');
+
+		if (p)
+			*p++ = 0;
+
+		for (i = 0, is_flag = false; i < ARRAY_SIZE(mount_flags); i++) {
+			if (!strcmp(last, mount_flags[i].name)) {
+				if (mount_flags[i].flag < 0)
+					m->flags &= (uint32_t)mount_flags[i].flag;
+				else
+					m->flags |= (uint32_t)mount_flags[i].flag;
+				is_flag = true;
+				break;
+			}
+		}
+
+		if (!is_flag)
+			opts += sprintf(opts, "%s%s", (opts > m->options) ? "," : "", last);
+
+		last = p;
+
+	} while (p);
+
+	free(optstr);
 }
 
 static int mount_add(struct uci_section *s)
@@ -166,8 +253,10 @@ static int mount_add(struct uci_section *s)
 	m->uuid = blobmsg_get_strdup(tb[MOUNT_UUID]);
 	m->label = blobmsg_get_strdup(tb[MOUNT_LABEL]);
 	m->target = blobmsg_get_strdup(tb[MOUNT_TARGET]);
-	m->options = blobmsg_get_strdup(tb[MOUNT_OPTIONS]);
 	m->device = blobmsg_get_basename(tb[MOUNT_DEVICE]);
+
+	parse_mount_options(m, blobmsg_get_strdup(tb[MOUNT_OPTIONS]));
+
 	m->overlay = m->extroot = 0;
 	if (m->target && !strcmp(m->target, "/"))
 		m->extroot = 1;
@@ -525,7 +614,8 @@ static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 		if (check_fs)
 			check_filesystem(pr);
 
-		err = mount(pr->dev, target, pr->id->name, 0, (m->options) ? (m->options) : (""));
+		err = mount(pr->dev, target, pr->id->name, m->flags,
+		            (m->options) ? (m->options) : (""));
 		if (err)
 			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
 					pr->dev, pr->id->name, target, err, strerror(err));
