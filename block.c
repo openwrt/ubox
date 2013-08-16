@@ -957,6 +957,8 @@ static int main_mount(int argc, char **argv)
 	list_for_each_entry(pr, &devices, list)
 		mount_device(pr, 0);
 
+	handle_swapfiles(true);
+
 	return 0;
 }
 
