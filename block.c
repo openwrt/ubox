@@ -114,6 +114,7 @@ static const struct uci_blob_param_list mount_attr_list = {
 enum {
 	SWAP_ENABLE,
 	SWAP_UUID,
+	SWAP_LABEL,
 	SWAP_DEVICE,
 	SWAP_PRIO,
 	__SWAP_MAX
@@ -122,6 +123,7 @@ enum {
 static const struct blobmsg_policy swap_policy[__SWAP_MAX] = {
 	[SWAP_ENABLE] = { .name = "enabled", .type = BLOBMSG_TYPE_INT32 },
 	[SWAP_UUID] = { .name = "uuid", .type = BLOBMSG_TYPE_STRING },
+	[SWAP_LABEL] = { .name = "label", .type = BLOBMSG_TYPE_STRING },
 	[SWAP_DEVICE] = { .name = "device", .type = BLOBMSG_TYPE_STRING },
 	[SWAP_PRIO] = { .name = "priority", .type = BLOBMSG_TYPE_INT32 },
 };
@@ -282,13 +284,14 @@ static int swap_add(struct uci_section *s)
 	uci_to_blob(&b, s, &swap_attr_list);
 	blobmsg_parse(swap_policy, __SWAP_MAX, tb, blob_data(b.head), blob_len(b.head));
 
-	if (!tb[SWAP_UUID] && !tb[SWAP_DEVICE])
+	if (!tb[SWAP_UUID] && !tb[SWAP_LABEL] && !tb[SWAP_DEVICE])
 		return -1;
 
 	m = malloc(sizeof(struct mount));
 	memset(m, 0, sizeof(struct mount));
 	m->type = TYPE_SWAP;
 	m->uuid = blobmsg_get_strdup(tb[SWAP_UUID]);
+	m->label = blobmsg_get_strdup(tb[SWAP_LABEL]);
 	m->device = blobmsg_get_basename(tb[SWAP_DEVICE]);
 	if (tb[SWAP_PRIO])
 		m->prio = blobmsg_get_u32(tb[SWAP_PRIO]);
@@ -332,7 +335,7 @@ static int global_add(struct uci_section *s)
 	return 0;
 }
 
-static struct mount* find_swap(const char *uuid, const char *device)
+static struct mount* find_swap(const char *uuid, const char *label, const char *device)
 {
 	struct mount *m;
 
@@ -340,6 +343,8 @@ static struct mount* find_swap(const char *uuid, const char *device)
 		if (m->type != TYPE_SWAP)
 			continue;
 		if (uuid && m->uuid && !strcmp(m->uuid, uuid))
+			return m;
+		if (label && m->label && !strcmp(m->label, label))
 			return m;
 		if (device && m->device && !strcmp(m->device, device))
 			return m;
@@ -631,7 +636,7 @@ static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 	if (!strcmp(pr->id->name, "swap")) {
 		if (hotplug && !auto_swap)
 			return -1;
-		m = find_swap(pr->uuid, device);
+		m = find_swap(pr->uuid, pr->label, device);
 		if (m || anon_swap)
 			swapon(pr->dev, (m) ? (m->prio) : (0));
 
