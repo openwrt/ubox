@@ -28,6 +28,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <syslog.h>
+#include <libgen.h>
 #include <glob.h>
 #include <elf.h>
 
@@ -37,11 +38,16 @@
 
 #define DEF_MOD_PATH "/lib/modules/%s/"
 
+#define LOG(fmt, ...) do { \
+	syslog(LOG_INFO, fmt, ## __VA_ARGS__); \
+	printf("kmod: "fmt, ## __VA_ARGS__); \
+	} while (0)
+
+
 enum {
 	SCANNED,
 	PROBE,
 	LOADED,
-	FAILED,
 };
 
 struct module {
@@ -53,6 +59,7 @@ struct module {
 	int size;
 	int usage;
 	int state;
+	int error;
 };
 
 static struct avl_tree modules;
@@ -182,6 +189,7 @@ alloc_module(const char *name, const char *depends, int size)
 		return NULL;
 
 	m->avl.key = m->name = strcpy(_name, name);
+
 	if (depends)
 		m->depends = strcpy(_dep, depends);
 
@@ -198,7 +206,7 @@ static int scan_loaded_modules(void)
 
 	fp = fopen("/proc/modules", "r");
 	if (!fp) {
-		fprintf(stderr, "failed to open /proc/modules\n");
+		LOG("failed to open /proc/modules\n");
 		return -1;
 	}
 
@@ -233,23 +241,23 @@ static struct module* get_module_info(const char *module, const char *name)
 	struct stat s;
 
 	if (!fd) {
-		fprintf(stderr, "failed to open %s\n", module);
+		LOG("failed to open %s\n", module);
 		return NULL;
 	}
 
 	if (fstat(fd, &s) == -1) {
-		fprintf(stderr, "failed to stat %s\n", module);
+		LOG("failed to stat %s\n", module);
 		return NULL;
 	}
 
 	map = mmap(NULL, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (map == MAP_FAILED) {
-		fprintf(stderr, "failed to mmap %s\n", module);
+		LOG("failed to mmap %s\n", module);
 		return NULL;
 	}
 
 	if (elf_find_section(map, ".modinfo", &offset, &size)) {
-		fprintf(stderr, "failed to load the .modinfo section from %s\n", module);
+		LOG("failed to load the .modinfo section from %s\n", module);
 		return NULL;
 	}
 
@@ -279,13 +287,19 @@ static struct module* get_module_info(const char *module, const char *name)
 	return m;
 }
 
-static int scan_module_folder(char *dir)
+static int scan_module_folder(void)
 {
 	int gl_flags = GLOB_NOESCAPE | GLOB_MARK;
-	int j;
+	struct utsname ver;
+	char *path;
 	glob_t gl;
+	int j;
 
-	if (glob(dir, gl_flags, NULL, &gl) < 0)
+	uname(&ver);
+	path = alloca(sizeof(DEF_MOD_PATH "*.ko") + strlen(ver.release) + 1);
+	sprintf(path, DEF_MOD_PATH "*.ko", ver.release);
+
+	if (glob(path, gl_flags, NULL, &gl) < 0)
 		return -1;
 
 	for (j = 0; j < gl.gl_pathc; j++) {
@@ -301,6 +315,7 @@ static int scan_module_folder(char *dir)
 	}
 
 	globfree(&gl);
+	free(path);
 
 	return 0;
 }
@@ -313,23 +328,23 @@ static int print_modinfo(char *module)
 	char *map, *strings;
 
 	if (!fd) {
-		fprintf(stderr, "failed to open %s\n", module);
+		LOG("failed to open %s\n", module);
 		return -1;
 	}
 
 	if (fstat(fd, &s) == -1) {
-		fprintf(stderr, "failed to stat %s\n", module);
+		LOG("failed to stat %s\n", module);
 		return -1;
 	}
 
 	map = mmap(NULL, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (map == MAP_FAILED) {
-		fprintf(stderr, "failed to mmap %s\n", module);
+		LOG("failed to mmap %s\n", module);
 		return -1;
 	}
 
 	if (elf_find_section(map, ".modinfo", &offset, &size)) {
-		fprintf(stderr, "failed to load the .modinfo section from %s\n", module);
+		LOG("failed to load the .modinfo section from %s\n", module);
 		return -1;
 	}
 
@@ -360,6 +375,39 @@ static int print_modinfo(char *module)
 	return 0;
 }
 
+static int deps_available(struct module *m, int verbose)
+{
+	char *deps, *_deps;
+	char *comma;
+	int err = 0;
+
+	if (!strcmp(m->depends, "-") || !strcmp(m->depends, ""))
+		return 0;
+
+	_deps = deps = strdup(m->depends);
+
+	do {
+		comma = strstr(deps, ",");
+		if (comma)
+			*comma = '\0';
+
+		m = find_module(deps);
+
+		if (verbose && !m)
+			LOG("missing dependency %s\n", deps);
+		if (verbose && m && (m->state != LOADED))
+			LOG("dependency not loaded %s\n", deps);
+		if (!m || (m->state != LOADED))
+			err++;
+		if (comma)
+			deps = ++comma;
+	} while (comma);
+
+	free(_deps);
+
+	return err;
+}
+
 static int insert_module(char *path, const char *options)
 {
 	void *data = 0;
@@ -367,24 +415,21 @@ static int insert_module(char *path, const char *options)
 	int fd, ret = -1;
 
 	if (stat(path, &s)) {
-		fprintf(stderr, "missing module %s\n", path);
+		LOG("missing module %s\n", path);
 		return ret;
 	}
 
 	fd = open(path, O_RDONLY);
 	if (!fd) {
-		fprintf(stderr, "cannot open %s\n", path);
+		LOG("cannot open %s\n", path);
 		return ret;
 	}
 
 	data = malloc(s.st_size);
-	if (read(fd, data, s.st_size) == s.st_size) {
+	if (read(fd, data, s.st_size) == s.st_size)
 		ret = syscall(__NR_init_module, data, s.st_size, options);
-		if (ret)
-			fprintf(stderr, "failed to insert %s\n", path);
-	} else {
-		fprintf(stderr, "failed to read full module %s\n", path);
-	}
+	else
+		LOG("failed to read full module %s\n", path);
 
 	close(fd);
 	free(data);
@@ -392,65 +437,90 @@ static int insert_module(char *path, const char *options)
 	return ret;
 }
 
-static int deps_available(struct module *m)
+static void load_moddeps(struct module *_m)
 {
-	char *deps = m->depends;
+	char *deps, *_deps;
+	struct module *m;
 	char *comma;
 
-	if (!strcmp(deps, "-"))
-		return 0;
-	while (*deps && (NULL != ((comma = strstr(deps, ","))))) {
-		*comma = '\0';
+	if (!strcmp(_m->depends, "-") || !strcmp(_m->depends, ""))
+		return;
+
+	_deps = deps = strdup(_m->depends);
+
+	do {
+		char *t = deps;
+
+		comma = strstr(deps, ",");
+		if (comma)
+			*comma = '\0';
 
 		m = find_module(deps);
 
-		if (!m || (m->state != LOADED))
-			return -1;
+		if (!m) {
+			while (t && *t) {
+				if (*t == '-')
+					*t = '_';
+				t++;
+			}
+			m = find_module(deps);
+		}
 
-		deps = ++comma;
-	}
+		if (!m)
+			LOG("failed to find dependency %s\n", deps);
+		if (m && (m->state != LOADED)) {
+			m->state = PROBE;
+			load_moddeps(m);
+		}
 
-	return 0;
+		if (comma)
+			deps = ++comma;
+	} while (comma);
+
+	free(_deps);
 }
 
-static int load_depmod(void)
+static int load_modprobe(void)
 {
 	int loaded, todo;
 	struct module *m;
+
+	avl_for_each_element(&modules, m, avl)
+		if (m->state == PROBE)
+			load_moddeps(m);
 
 	do {
 		loaded = 0;
 		todo = 0;
 		avl_for_each_element(&modules, m, avl) {
-			if ((m->state == PROBE) && (!deps_available(m))) {
+			if ((m->state == PROBE) && (!deps_available(m, 0))) {
 				if (!insert_module(get_module_path(m->name), "")) {
 					m->state = LOADED;
+					m->error = 0;
 					loaded++;
 					continue;
 				}
-				m->state = FAILED;
-			} else if (m->state == PROBE) {
-				todo++;
+				m->error = 1;
 			}
+
+			if ((m->state == PROBE) || m->error)
+				todo++;
 		}
-//		printf("loaded %d modules this pass\n", loaded);
 	} while (loaded);
 
-//	printf("missing todos %d\n", todo);
-
-	return -todo;
+	return todo;
 }
 
 static int print_insmod_usage(void)
 {
-	fprintf(stderr, "Usage:\n\tinsmod filename [args]\n");
+	LOG("Usage:\n\tinsmod filename [args]\n");
 
 	return -1;
 }
 
 static int print_usage(char *arg)
 {
-	fprintf(stderr, "Usage:\n\t%s module\n", arg);
+	LOG("Usage:\n\t%s module\n", arg);
 
 	return -1;
 }
@@ -465,7 +535,7 @@ static int main_insmod(int argc, char **argv)
 
 	name = get_module_name(argv[1]);
 	if (!name) {
-		fprintf(stderr, "cannot find module - %s\n", argv[1]);
+		LOG("cannot find module - %s\n", argv[1]);
 		return -1;
 	}
 
@@ -473,7 +543,7 @@ static int main_insmod(int argc, char **argv)
 		return -1;
 
 	if (find_module(name)) {
-		fprintf(stderr, "module is already loaded - %s\n", name);
+		LOG("module is already loaded - %s\n", name);
 		return -1;
 
 	}
@@ -497,6 +567,9 @@ static int main_insmod(int argc, char **argv)
 	ret = insert_module(get_module_path(name), options);
 	free(options);
 
+	if (ret)
+		LOG("failed to insert %s\n", get_module_path(name));
+
 	return ret;
 }
 
@@ -515,7 +588,7 @@ static int main_rmmod(int argc, char **argv)
 	name = get_module_name(argv[1]);
 	m = find_module(name);
 	if (!m) {
-		fprintf(stderr, "module is not loaded\n");
+		LOG("module is not loaded\n");
 		return -1;
 	}
 	free_modules();
@@ -523,7 +596,7 @@ static int main_rmmod(int argc, char **argv)
 	ret = syscall(__NR_delete_module, name, 0);
 
 	if (ret)
-		fprintf(stderr, "unloading the module failed\n");
+		LOG("unloading the module failed\n");
 
 	return ret;
 }
@@ -555,7 +628,7 @@ static int main_modinfo(int argc, char **argv)
 
 	module = get_module_path(argv[1]);
 	if (!module) {
-		fprintf(stderr, "cannot find module - %s\n", argv[1]);
+		LOG("cannot find module - %s\n", argv[1]);
 		return -1;
 	}
 
@@ -564,35 +637,42 @@ static int main_modinfo(int argc, char **argv)
 	return 0;
 }
 
-static int main_depmod(int argc, char **argv)
+static int main_modprobe(int argc, char **argv)
 {
-	struct utsname ver;
 	struct module *m;
-	char *path;
 	char *name;
 
 	if (argc != 2)
-		return print_usage("depmod");
+		return print_usage("modprobe");
 
 	if (scan_loaded_modules())
 		return -1;
 
-	uname(&ver);
-	path = alloca(sizeof(DEF_MOD_PATH "*.ko") + strlen(ver.release) + 1);
-	sprintf(path, DEF_MOD_PATH "*.ko", ver.release);
-
-	scan_module_folder(path);
+	if (scan_module_folder())
+		return -1;
 
 	name = get_module_name(argv[1]);
 	m = find_module(name);
 	if (m && m->state == LOADED) {
-		fprintf(stderr, "%s is already loaded\n", name);
+		LOG("%s is already loaded\n", name);
 		return -1;
 	} else if (!m) {
-		fprintf(stderr, "failed to find a module named %s\n", name);
+		LOG("failed to find a module named %s\n", name);
 	} else {
+		int fail;
+
 		m->state = PROBE;
-		load_depmod();
+
+		fail = load_modprobe();
+
+		if (fail) {
+			LOG("%d module%s could not be probed\n",
+					fail, (fail == 1) ? ("") : ("s"));
+
+			avl_for_each_element(&modules, m, avl)
+				if ((m->state == PROBE) || m->error)
+					LOG("- %s\n", m->name);
+		}
 	}
 
 	free_modules();
@@ -604,9 +684,10 @@ static int main_loader(int argc, char **argv)
 {
 	int gl_flags = GLOB_NOESCAPE | GLOB_MARK;
 	char *dir = "/etc/modules.d/*";
+	struct module *m;
 	glob_t gl;
 	char *path;
-	int j;
+	int fail, j;
 
 	if (argc > 1)
 		dir = argv[1];
@@ -618,7 +699,11 @@ static int main_loader(int argc, char **argv)
 	strcpy(path, dir);
 	strcat(path, "*");
 
-	scan_loaded_modules();
+	if (scan_loaded_modules())
+		return -1;
+
+	if (scan_module_folder())
+		return -1;
 
 	syslog(0, "kmodloader: loading kernel modules from %s\n", path);
 
@@ -631,7 +716,7 @@ static int main_loader(int argc, char **argv)
 		char *mod = NULL;
 
 		if (!fp) {
-			fprintf(stderr, "failed to open %s\n", gl.gl_pathv[j]);
+			LOG("failed to open %s\n", gl.gl_pathv[j]);
 			continue;
 		}
 
@@ -648,12 +733,27 @@ static int main_loader(int argc, char **argv)
 				*opts++ = '\0';
 
 			m = find_module(get_module_name(mod));
-			if (m)
+			if (!m || (m->state == LOADED))
 				continue;
-			insert_module(get_module_path(mod), (opts) ? (opts) : (""));
+
+			m->state = PROBE;
+			if (basename(gl.gl_pathv[j])[0] - '0' <= 9)
+				load_modprobe();
+
 		}
 		free(mod);
 		fclose(fp);
+	}
+
+	fail = load_modprobe();
+
+	if (fail) {
+		LOG("%d module%s could not be probed\n",
+				fail, (fail == 1) ? ("") : ("s"));
+
+		avl_for_each_element(&modules, m, avl)
+			if ((m->state == PROBE) || (m->error))
+				LOG("- %s - %d\n", m->name, deps_available(m, 1));
 	}
 
 out:
@@ -680,8 +780,8 @@ int main(int argc, char **argv)
 	if (!strcmp(exec, "modinfo"))
 		return main_modinfo(argc, argv);
 
-	if (!strcmp(exec, "depmod"))
-		return main_depmod(argc, argv);
+	if (!strcmp(exec, "modprobe"))
+		return main_modprobe(argc, argv);
 
 	return main_loader(argc, argv);
 }
