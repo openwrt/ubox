@@ -302,7 +302,13 @@ static int swap_add(struct uci_section *s)
 		/* store complete swap path */
 		if (tb[SWAP_DEVICE])
 			m->target = blobmsg_get_strdup(tb[SWAP_DEVICE]);
-		vlist_add(&mounts, &m->node, (m->uuid) ? (m->uuid) : (m->device));
+
+		if (m->uuid)
+			vlist_add(&mounts, &m->node, m->uuid);
+		else if (m->label)
+			vlist_add(&mounts, &m->node, m->label);
+		else if (m->device)
+			vlist_add(&mounts, &m->node, m->device);
 	}
 
 	return 0;
