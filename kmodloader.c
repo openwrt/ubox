@@ -315,7 +315,6 @@ static int scan_module_folder(void)
 	}
 
 	globfree(&gl);
-	free(path);
 
 	return 0;
 }
