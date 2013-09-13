@@ -79,30 +79,42 @@ static void free_modules(void)
 		free(m);
 }
 
+static void replace_dash(char *s)
+{
+	while (s && *s) {
+		if (*s == '-')
+			*s = '_';
+		s++;
+	}
+}
+
+static void replace_underscore(char *s)
+{
+	while (s && *s) {
+		if (*s == '_')
+			*s = '-';
+		s++;
+	}
+}
+
 static char* get_module_path(char *name)
 {
 	static char path[256];
 	struct utsname ver;
 	struct stat s;
-	char *t;
 
 	if (!stat(name, &s))
 		return name;
 
 	uname(&ver);
 	snprintf(path, 256, "%s" DEF_MOD_PATH "%s.ko", prefix, ver.release, name);
+	replace_dash(path);
 
 	if (!stat(path, &s))
 		return path;
 
-	t = name;
-	while (t && *t) {
-		if (*t == '_')
-			*t = '-';
-		t++;
-	}
-
 	snprintf(path, 256, "%s" DEF_MOD_PATH "%s.ko", prefix, ver.release, name);
+	replace_underscore(path);
 
 	if (!stat(path, &s))
 		return path;
@@ -120,12 +132,7 @@ static char* get_module_name(char *path)
 	t = strstr(name, ".ko");
 	if (t)
 		*t = '\0';
-	t = name;
-	while (t && *t) {
-		if (*t == '-')
-			*t = '_';
-		t++;
-	}
+        replace_dash(name);
 
 	return name;
 }
@@ -184,17 +191,26 @@ alloc_module(const char *name, const char *depends, int size)
 
 	m = calloc_a(sizeof(*m),
 		&_name, strlen(name) + 1,
-		&_dep, depends ? strlen(depends) + 1 : 0);
+		&_dep, depends ? strlen(depends) + 2 : 0);
 	if (!m)
 		return NULL;
 
 	m->avl.key = m->name = strcpy(_name, name);
+	replace_dash(_name);
 
-	if (depends)
+	if (depends) {
 		m->depends = strcpy(_dep, depends);
+		replace_dash(_dep);
+		while (*_dep) {
+			if (*_dep == ',')
+				*_dep = '\0';
+			_dep++;
+		}
+	}
 
 	m->size = size;
 	avl_insert(&modules, &m->avl);
+
 	return m;
 }
 
@@ -376,33 +392,25 @@ static int print_modinfo(char *module)
 
 static int deps_available(struct module *m, int verbose)
 {
-	char *deps, *_deps;
-	char *comma;
+	char *dep;
 	int err = 0;
 
-	if (!strcmp(m->depends, "-") || !strcmp(m->depends, ""))
+	if (!strcmp(m->depends, "_") || !strcmp(m->depends, ""))
 		return 0;
 
-	_deps = deps = strdup(m->depends);
+	dep = m->depends;
 
-	do {
-		comma = strstr(deps, ",");
-		if (comma)
-			*comma = '\0';
-
-		m = find_module(deps);
+	while (*dep) {
+		m = find_module(dep);
 
 		if (verbose && !m)
-			LOG("missing dependency %s\n", deps);
+			LOG("missing dependency %s\n", dep);
 		if (verbose && m && (m->state != LOADED))
-			LOG("dependency not loaded %s\n", deps);
+			LOG("dependency not loaded %s\n", dep);
 		if (!m || (m->state != LOADED))
 			err++;
-		if (comma)
-			deps = ++comma;
-	} while (comma);
-
-	free(_deps);
+		dep += strlen(dep) + 1;
+	}
 
 	return err;
 }
@@ -438,47 +446,29 @@ static int insert_module(char *path, const char *options)
 
 static void load_moddeps(struct module *_m)
 {
-	char *deps, *_deps;
+	char *dep;
 	struct module *m;
-	char *comma;
 
-	if (!strcmp(_m->depends, "-") || !strcmp(_m->depends, ""))
+	if (!strcmp(_m->depends, "_") || !strcmp(_m->depends, ""))
 		return;
 
-	_deps = deps = strdup(_m->depends);
+	dep = _m->depends;
 
-	do {
-		char *t = deps;
-
-		comma = strstr(deps, ",");
-		if (comma)
-			*comma = '\0';
-
-		m = find_module(deps);
-
-		if (!m) {
-			while (t && *t) {
-				if (*t == '-')
-					*t = '_';
-				t++;
-			}
-			m = find_module(deps);
-		}
+	while (*dep) {
+		m = find_module(dep);
 
 		if (!m)
-			LOG("failed to find dependency %s\n", deps);
+			LOG("failed to find dependency %s\n", dep);
 		if (m && (m->state != LOADED)) {
 			m->state = PROBE;
 			load_moddeps(m);
 		}
 
-		if (comma)
-			deps = ++comma;
-	} while (comma);
-
-	free(_deps);
+		dep = dep + strlen(dep) + 1;
+	}
 }
 
+static int iterations = 0;
 static int load_modprobe(void)
 {
 	int loaded, todo;
@@ -505,6 +495,7 @@ static int load_modprobe(void)
 			if ((m->state == PROBE) || m->error)
 				todo++;
 		}
+		iterations++;
 	} while (loaded);
 
 	return todo;
@@ -745,6 +736,7 @@ static int main_loader(int argc, char **argv)
 	}
 
 	fail = load_modprobe();
+	LOG("ran %d iterations\n", iterations);
 
 	if (fail) {
 		LOG("%d module%s could not be probed\n",
