@@ -81,6 +81,8 @@ static void free_modules(void)
 
 static void replace_dash(char *s)
 {
+	if (*s == '-')
+		return;
 	while (s && *s) {
 		if (*s == '-')
 			*s = '_';
@@ -395,7 +397,7 @@ static int deps_available(struct module *m, int verbose)
 	char *dep;
 	int err = 0;
 
-	if (!strcmp(m->depends, "_") || !strcmp(m->depends, ""))
+	if (!strcmp(m->depends, "-") || !strcmp(m->depends, ""))
 		return 0;
 
 	dep = m->depends;
@@ -449,7 +451,7 @@ static void load_moddeps(struct module *_m)
 	char *dep;
 	struct module *m;
 
-	if (!strcmp(_m->depends, "_") || !strcmp(_m->depends, ""))
+	if (!strcmp(_m->depends, "-") || !strcmp(_m->depends, ""))
 		return;
 
 	dep = _m->depends;
