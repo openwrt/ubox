@@ -110,13 +110,13 @@ static char* get_module_path(char *name)
 
 	uname(&ver);
 	snprintf(path, 256, "%s" DEF_MOD_PATH "%s.ko", prefix, ver.release, name);
-	replace_dash(path);
+	replace_dash(basename(path));
 
 	if (!stat(path, &s))
 		return path;
 
 	snprintf(path, 256, "%s" DEF_MOD_PATH "%s.ko", prefix, ver.release, name);
-	replace_underscore(path);
+	replace_underscore(basename(path));
 
 	if (!stat(path, &s))
 		return path;
