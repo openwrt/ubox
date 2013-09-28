@@ -553,12 +553,12 @@ static int main_rmmod(int argc, char **argv)
 		LOG("module is not loaded\n");
 		return -1;
 	}
-	free_modules();
-
-	ret = syscall(__NR_delete_module, name, 0);
+	ret = syscall(__NR_delete_module, m->name, 0);
 
 	if (ret)
 		LOG("unloading the module failed\n");
+
+	free_modules();
 
 	return ret;
 }
