@@ -79,26 +79,6 @@ static void free_modules(void)
 		free(m);
 }
 
-static void replace_dash(char *s)
-{
-	if (*s == '-')
-		return;
-	while (s && *s) {
-		if (*s == '-')
-			*s = '_';
-		s++;
-	}
-}
-
-static void replace_underscore(char *s)
-{
-	while (s && *s) {
-		if (*s == '_')
-			*s = '-';
-		s++;
-	}
-}
-
 static char* get_module_path(char *name)
 {
 	static char path[256];
@@ -110,13 +90,6 @@ static char* get_module_path(char *name)
 
 	uname(&ver);
 	snprintf(path, 256, "%s" DEF_MOD_PATH "%s.ko", prefix, ver.release, name);
-	replace_dash(basename(path));
-
-	if (!stat(path, &s))
-		return path;
-
-	snprintf(path, 256, "%s" DEF_MOD_PATH "%s.ko", prefix, ver.release, name);
-	replace_underscore(basename(path));
 
 	if (!stat(path, &s))
 		return path;
@@ -134,7 +107,6 @@ static char* get_module_name(char *path)
 	t = strstr(name, ".ko");
 	if (t)
 		*t = '\0';
-        replace_dash(name);
 
 	return name;
 }
@@ -198,11 +170,9 @@ alloc_module(const char *name, const char *depends, int size)
 		return NULL;
 
 	m->avl.key = m->name = strcpy(_name, name);
-	replace_dash(_name);
 
 	if (depends) {
 		m->depends = strcpy(_dep, depends);
-		replace_dash(_dep);
 		while (*_dep) {
 			if (*_dep == ',')
 				*_dep = '\0';
@@ -756,11 +726,27 @@ out:
 	return 0;
 }
 
+static int avl_modcmp(const void *k1, const void *k2, void *ptr)
+{
+	const char *s1 = k1;
+	const char *s2 = k2;
+
+	while (*s1 && ((*s1 == *s2) ||
+	               ((*s1 == '_') && (*s2 == '-')) ||
+	               ((*s1 == '-') && (*s2 == '_'))))
+	{
+		s1++;
+		s2++;
+	}
+
+	return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+}
+
 int main(int argc, char **argv)
 {
 	char *exec = basename(*argv);
 
-	avl_init(&modules, avl_strcmp, false, NULL);
+	avl_init(&modules, avl_modcmp, false, NULL);
 	if (!strcmp(exec, "insmod"))
 		return main_insmod(argc, argv);
 
