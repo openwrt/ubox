@@ -583,18 +583,29 @@ static int main_lsmod(int argc, char **argv)
 
 static int main_modinfo(int argc, char **argv)
 {
-	char *module;
+	struct module *m;
+	char *name;
 
 	if (argc != 2)
 		return print_usage("modinfo");
 
-	module = get_module_path(argv[1]);
-	if (!module) {
+	if (scan_module_folder())
+		return -1;
+
+	name = get_module_name(argv[1]);
+	m = find_module(name);
+	if (!m) {
 		LOG("cannot find module - %s\n", argv[1]);
 		return -1;
 	}
 
-	print_modinfo(module);
+	name = get_module_path(m->name);
+	if (!name) {
+		LOG("cannot find path of module - %s\n", m->name);
+		return -1;
+	}
+
+	print_modinfo(name);
 
 	return 0;
 }
