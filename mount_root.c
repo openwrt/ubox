@@ -423,6 +423,9 @@ static int switch2jffs(void)
 {
 	char mtd[32];
 
+	if (!find_mtd_block("rootfs_patches", mtd, sizeof(mtd)))
+		return 0;
+
 	if (find_mtd_block("rootfs_data", mtd, sizeof(mtd))) {
 		ERROR("no rootfs_data was found\n");
 		return -1;
@@ -763,7 +766,9 @@ int main(int argc, char **argv)
 	if (!getenv("PREINIT"))
 		return -1;
 
-	if (find_mtd_char("rootfs_data", mtd, sizeof(mtd))) {
+	if (!find_mtd_block("rootfs_patches", mtd, sizeof(mtd))) {
+		ramoverlay();
+	} else if (find_mtd_char("rootfs_data", mtd, sizeof(mtd))) {
 		if (!find_mtd_char("rootfs", mtd, sizeof(mtd)))
 			mtd_unlock(mtd);
 		LOG("mounting /dev/root\n");
