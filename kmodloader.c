@@ -284,8 +284,8 @@ static int scan_module_folder(void)
 	int j;
 
 	uname(&ver);
-	path = alloca(sizeof(DEF_MOD_PATH "*.ko") + strlen(ver.release) + 1);
-	sprintf(path, DEF_MOD_PATH "*.ko", ver.release);
+	path = alloca(sizeof(DEF_MOD_PATH "*.ko") + strlen(prefix) + strlen(ver.release) + 1);
+	sprintf(path, "%s" DEF_MOD_PATH "*.ko", prefix, ver.release);
 
 	if (glob(path, gl_flags, NULL, &gl) < 0)
 		return -1;
