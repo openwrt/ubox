@@ -582,7 +582,7 @@ static int main_jffs2reset(int argc, char **argv)
 
 	mp = find_mount_point(mtd, "jffs2");
 	if (mp) {
-		LOG("%s is mounted as %s, only ereasing files\n", mtd, mp);
+		LOG("%s is mounted as %s, only erasing files\n", mtd, mp);
 		foreachdir(mp, handle_rmdir);
 		mount(mp, "/", NULL, MS_REMOUNT, 0);
 	} else {
