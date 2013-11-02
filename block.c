@@ -13,6 +13,7 @@
  */
 
 #define _GNU_SOURCE
+#include <getopt.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <syslog.h>
@@ -1036,50 +1037,75 @@ static int main_info(int argc, char **argv)
 	return 0;
 }
 
+static int swapon_usage(void)
+{
+	fprintf(stderr, "Usage: swapon [-s] [-a] [[-p pri] DEVICE]\n\n"
+		"\tStart swapping on [DEVICE]\n"
+		" -a\tStart swapping on all swap devices\n"
+		" -p pri\tSet priority of swap device\n"
+		" -s\tShow summary\n");
+	return -1;
+}
+
 static int main_swapon(int argc, char **argv)
 {
-	if (argc != 2) {
-		fprintf(stderr, "Usage: swapon <-s> <-a> [DEVICE]\n\n\tStart swapping on [DEVICE]\n -a\tStart swapping on all swap devices\n -s\tShow summary\n");
-		return -1;
+	int ch;
+	FILE *fp;
+	char *lineptr;
+	size_t s;
+	struct blkid_struct_probe *pr;
+	int flags = 0;
+	int pri;
+	struct stat st;
+	int err;
+
+	while ((ch = getopt(argc, argv, "ap:s")) != -1) {
+		switch(ch) {
+		case 's':
+			fp = fopen("/proc/swaps", "r");
+			lineptr = NULL;
+
+			if (!fp) {
+				fprintf(stderr, "failed to open /proc/swaps\n");
+				return -1;
+			}
+			while (getline(&lineptr, &s, fp) > 0)
+				printf(lineptr);
+			if (lineptr)
+				free(lineptr);
+			fclose(fp);
+			return 0;
+		case 'a':
+			cache_load(0);
+			list_for_each_entry(pr, &devices, list) {
+				if (strcmp(pr->id->name, "swap"))
+					continue;
+				if (swapon(pr->dev, 0))
+					fprintf(stderr, "failed to swapon %s\n", pr->dev);
+			}
+			return 0;
+		case 'p':
+			pri = atoi(optarg);
+			if (pri >= 0)
+				flags = ((pri << SWAP_FLAG_PRIO_SHIFT) & SWAP_FLAG_PRIO_MASK) | SWAP_FLAG_PREFER;
+			break;
+		default:
+			return swapon_usage();
+		}
+
 	}
 
-	if (!strcmp(argv[1], "-s")) {
-		FILE *fp = fopen("/proc/swaps", "r");
-		char *lineptr = NULL;
-		size_t s;
+	if (optind != (argc - 1))
+		return swapon_usage();
 
-		if (!fp) {
-			fprintf(stderr, "failed to open /proc/swaps\n");
-			return -1;
-		}
-		while (getline(&lineptr, &s, fp) > 0)
-			printf(lineptr);
-		if (lineptr)
-			free(lineptr);
-		fclose(fp);
-	} else if (!strcmp(argv[1], "-a")) {
-		struct blkid_struct_probe *pr;
-
-		cache_load(0);
-		list_for_each_entry(pr, &devices, list) {
-			if (strcmp(pr->id->name, "swap"))
-				continue;
-			if (swapon(pr->dev, 0))
-				fprintf(stderr, "failed to swapon %s\n", pr->dev);
-		}
-	} else {
-		struct stat s;
-		int err;
-
-		if (stat(argv[1], &s) || (!S_ISBLK(s.st_mode) && !S_ISREG(s.st_mode))) {
-			fprintf(stderr, "%s is not a block device or file\n", argv[1]);
-			return -1;
-		}
-		err = swapon(argv[1], 0);
-		if (err) {
-			fprintf(stderr, "failed to swapon %s (%d)\n", argv[1], err);
-			return err;
-		}
+	if (stat(argv[optind], &st) || (!S_ISBLK(st.st_mode) && !S_ISREG(st.st_mode))) {
+		fprintf(stderr, "%s is not a block device or file\n", argv[optind]);
+		return -1;
+	}
+	err = swapon(argv[optind], flags);
+	if (err) {
+		fprintf(stderr, "failed to swapon %s (%d)\n", argv[optind], err);
+		return err;
 	}
 
 	return 0;
@@ -1088,7 +1114,9 @@ static int main_swapon(int argc, char **argv)
 static int main_swapoff(int argc, char **argv)
 {
 	if (argc != 2) {
-		fprintf(stderr, "Usage: swapoff [-a] [DEVICE]\n\n\tStop swapping on DEVICE\n -a\tStop swapping on all swap devices\n");
+		fprintf(stderr, "Usage: swapoff [-a] [DEVICE]\n\n"
+			"\tStop swapping on DEVICE\n"
+			" -a\tStop swapping on all swap devices\n");
 		return -1;
 	}
 
