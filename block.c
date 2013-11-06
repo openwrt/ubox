@@ -525,7 +525,7 @@ static struct blkid_struct_probe* find_block_info(char *uuid, char *label, char 
 
 	if (path)
 		list_for_each_entry(pr, &devices, list)
-			if (!strcmp(pr->dev, path))
+			if (!strcmp(basename(pr->dev), basename(path)))
 				return pr;
 
 	return NULL;
@@ -872,14 +872,14 @@ static int mount_extroot(char *cfg)
 	if (!m || !m->extroot)
 		return -1;
 
-	pr = find_block_info(m->uuid, m->label, NULL);
+	pr = find_block_info(m->uuid, m->label, m->device);
 
 	if (!pr && delay_root){
 		fprintf(stderr, "extroot: is not ready yet, retrying in %u seconds\n", delay_root);
 		sleep(delay_root);
 		mkblkdev();
 		cache_load(0);
-		pr = find_block_info(m->uuid, m->label, NULL);
+		pr = find_block_info(m->uuid, m->label, m->device);
 	}
 	if (pr) {
 		if (strncmp(pr->id->name, "ext", 3)) {
