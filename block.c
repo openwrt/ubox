@@ -520,7 +520,7 @@ static struct blkid_struct_probe* find_block_info(char *uuid, char *label, char 
 
 	if (label)
 		list_for_each_entry(pr, &devices, list)
-			if (strcmp(pr->label, label))
+			if (!strcmp(pr->label, label))
 				return pr;
 
 	if (path)
