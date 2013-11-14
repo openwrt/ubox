@@ -70,3 +70,15 @@ TARGET_LINK_LIBRARIES(validate_data ${LIBS} validate)
 INSTALL(TARGETS validate_data
 	RUNTIME DESTINATION sbin
 )
+
+ADD_EXECUTABLE(logd log/logd.c log/syslog.c)
+TARGET_LINK_LIBRARIES(logd ${LIBS})
+INSTALL(TARGETS logd
+	RUNTIME DESTINATION sbin
+)
+
+ADD_EXECUTABLE(logread log/logread.c)
+TARGET_LINK_LIBRARIES(logread ${LIBS})
+INSTALL(TARGETS logread
+	RUNTIME DESTINATION sbin
+)
