@@ -3,6 +3,10 @@ block
 board
 kmodloader
 lsbloader
+libvalidate.so
+logd
+logread
+validate_data
 .*
 Makefile
 CMakeCache.txt
