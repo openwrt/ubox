@@ -59,3 +59,14 @@ TARGET_LINK_LIBRARIES(lsbloader ${LIBS})
 INSTALL(TARGETS lsbloader
 	RUNTIME DESTINATION sbin
 )
+
+ADD_LIBRARY(validate SHARED validate/validate.c)
+INSTALL(TARGETS validate
+	LIBRARY DESTINATION lib
+)
+
+ADD_EXECUTABLE(validate_data validate/cli.c)
+TARGET_LINK_LIBRARIES(validate_data ${LIBS} validate)
+INSTALL(TARGETS validate_data
+	RUNTIME DESTINATION sbin
+)
