@@ -55,7 +55,6 @@ struct module {
 
 	char *name;
 	char *depends;
-	char *options;
 
 	int size;
 	int usage;
@@ -456,7 +455,7 @@ static int load_modprobe(void)
 		todo = 0;
 		avl_for_each_element(&modules, m, avl) {
 			if ((m->state == PROBE) && (!deps_available(m, 0))) {
-				if (!insert_module(get_module_path(m->name), m->options)) {
+				if (!insert_module(get_module_path(m->name), "")) {
 					m->state = LOADED;
 					m->error = 0;
 					loaded++;
@@ -710,7 +709,6 @@ static int main_loader(int argc, char **argv)
 			if (!m || (m->state == LOADED))
 				continue;
 
-			m->options = opts;
 			m->state = PROBE;
 			if (basename(gl.gl_pathv[j])[0] - '0' <= 9)
 				load_modprobe();
