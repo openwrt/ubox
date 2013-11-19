@@ -16,7 +16,7 @@
 #include "bitops.h"	/* swab16() */
 #include "superblocks.h"
 
-#include "md5.h"
+#include <libubox/md5.h>
 
 struct squashfs_super_block {
 	uint32_t s_magic;

@@ -26,7 +26,6 @@ INSTALL(TARGETS mount_root
 
 ADD_EXECUTABLE(block block.c
 		libblkid-tiny/libblkid-tiny.c
-		libblkid-tiny/md5.c
 		libblkid-tiny/mkdev.c
 		libblkid-tiny/ext.c
 		libblkid-tiny/jffs2.c
