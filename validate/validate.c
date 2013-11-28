@@ -25,7 +25,6 @@
 
 enum dt_optype {
 	OP_UNKNOWN,
-	OP_BOOL,
 	OP_NUMBER,
 	OP_STRING,
 	OP_FUNCTION
@@ -50,11 +49,13 @@ struct dt_state {
 	int pos;
 	int depth;
 	const char *value;
+	enum dt_type valtype;
 	struct dt_op stack[32];
 };
 
 struct dt_fun {
 	const char *name;
+	enum dt_type valtype;
 	bool (*call)(struct dt_state *s, int nargs);
 };
 
@@ -685,47 +686,47 @@ dt_type_file(struct dt_state *s, int nargs)
 
 
 static struct dt_fun dt_types[] = {
-	{ "or",				dt_type_or			},
-	{ "and",			dt_type_and			},
-	{ "not",			dt_type_not			},
-	{ "neg",			dt_type_neg			},
-	{ "list",			dt_type_list		},
-	{ "min",			dt_type_min			},
-	{ "max",			dt_type_max			},
-	{ "range",			dt_type_range		},
-	{ "minlength",		dt_type_minlen		},
-	{ "maxlength",		dt_type_maxlen		},
-	{ "rangelength",	dt_type_rangelen	},
-	{ "integer",		dt_type_int			},
-	{ "uinteger",		dt_type_uint		},
-	{ "float",			dt_type_float		},
-	{ "ufloat",			dt_type_ufloat		},
-	{ "bool",			dt_type_bool		},
-	{ "string",			dt_type_string		},
-	{ "ip4addr",		dt_type_ip4addr		},
-	{ "ip6addr",		dt_type_ip6addr		},
-	{ "ipaddr",			dt_type_ipaddr		},
-	{ "cidr4",			dt_type_cidr4		},
-	{ "cidr6",			dt_type_cidr6		},
-	{ "cidr",			dt_type_cidr		},
-	{ "netmask4",		dt_type_netmask4	},
-	{ "netmask6",		dt_type_netmask6	},
-	{ "ipmask4",		dt_type_ipmask4		},
-	{ "ipmask6",		dt_type_ipmask6		},
-	{ "ipmask",			dt_type_ipmask		},
-	{ "port",			dt_type_port		},
-	{ "portrange",		dt_type_portrange	},
-	{ "macaddr",		dt_type_macaddr		},
-	{ "uciname",        dt_type_uciname		},
-	{ "wpakey",			dt_type_wpakey		},
-	{ "wepkey",			dt_type_wepkey		},
-	{ "hostname",		dt_type_hostname	},
-	{ "host",			dt_type_host		},
-	{ "network",		dt_type_network		},
-	{ "phonedigit",		dt_type_phonedigit	},
-	{ "directory",		dt_type_directory	},
-	{ "device",			dt_type_device		},
-	{ "file",			dt_type_file		},
+	{ "or",				DT_INVALID,		dt_type_or			},
+	{ "and",			DT_INVALID,		dt_type_and			},
+	{ "not",			DT_INVALID,		dt_type_not			},
+	{ "neg",			DT_INVALID,		dt_type_neg			},
+	{ "list",			DT_INVALID,		dt_type_list		},
+	{ "min",			DT_NUMBER,		dt_type_min			},
+	{ "max",			DT_NUMBER,		dt_type_max			},
+	{ "range",			DT_NUMBER,		dt_type_range		},
+	{ "minlength",		DT_STRING,		dt_type_minlen		},
+	{ "maxlength",		DT_STRING,		dt_type_maxlen		},
+	{ "rangelength",	DT_STRING,		dt_type_rangelen	},
+	{ "integer",		DT_NUMBER,		dt_type_int			},
+	{ "uinteger",		DT_NUMBER,		dt_type_uint		},
+	{ "float",			DT_NUMBER,		dt_type_float		},
+	{ "ufloat",			DT_NUMBER,		dt_type_ufloat		},
+	{ "bool",			DT_BOOL,		dt_type_bool		},
+	{ "string",			DT_STRING,		dt_type_string		},
+	{ "ip4addr",		DT_STRING,		dt_type_ip4addr		},
+	{ "ip6addr",		DT_STRING,		dt_type_ip6addr		},
+	{ "ipaddr",			DT_STRING,		dt_type_ipaddr		},
+	{ "cidr4",			DT_STRING,		dt_type_cidr4		},
+	{ "cidr6",			DT_STRING,		dt_type_cidr6		},
+	{ "cidr",			DT_STRING,		dt_type_cidr		},
+	{ "netmask4",		DT_STRING,		dt_type_netmask4	},
+	{ "netmask6",		DT_STRING,		dt_type_netmask6	},
+	{ "ipmask4",		DT_STRING,		dt_type_ipmask4		},
+	{ "ipmask6",		DT_STRING,		dt_type_ipmask6		},
+	{ "ipmask",			DT_STRING,		dt_type_ipmask		},
+	{ "port",			DT_NUMBER,		dt_type_port		},
+	{ "portrange",		DT_STRING,		dt_type_portrange	},
+	{ "macaddr",		DT_STRING,		dt_type_macaddr		},
+	{ "uciname",		DT_STRING,		dt_type_uciname		},
+	{ "wpakey",			DT_STRING,		dt_type_wpakey		},
+	{ "wepkey",			DT_STRING,		dt_type_wepkey		},
+	{ "hostname",		DT_STRING,		dt_type_hostname	},
+	{ "host",			DT_STRING,		dt_type_host		},
+	{ "network",		DT_STRING,		dt_type_network		},
+	{ "phonedigit",		DT_STRING,		dt_type_phonedigit	},
+	{ "directory",		DT_STRING,		dt_type_directory	},
+	{ "device",			DT_STRING,		dt_type_device		},
+	{ "file",			DT_STRING,		dt_type_file		},
 
 	{ }
 };
@@ -948,10 +949,6 @@ dt_step(struct dt_state *s)
 
 	switch (op->type)
 	{
-	case OP_BOOL:
-		rv = op->value.boolean;
-		break;
-
 	case OP_NUMBER:
 		rv = dt_test_number(op->value.number, s->value);
 		break;
@@ -984,12 +981,15 @@ dt_call(struct dt_state *s)
 
 	rv = func->call(s, fptr->length);
 
+	if (rv && func->valtype)
+		s->valtype = func->valtype;
+
 	s->pos = fptr->nextop;
 
 	return rv;
 }
 
-bool
+enum dt_type
 dt_parse(const char *code, const char *value)
 {
 	struct dt_state s = {
@@ -1011,5 +1011,8 @@ dt_parse(const char *code, const char *value)
 
 	s.value = value;
 
-	return dt_call(&s);
+	if (dt_call(&s))
+		return s.valtype;
+
+	return DT_INVALID;
 }
