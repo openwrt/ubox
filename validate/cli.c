@@ -19,67 +19,156 @@ print_usage(char *argv)
 	fprintf(stderr, "%s <package> <section_type> <section_name> 'option:datatype:default' 'option:datatype:default' ...\n", argv);
 }
 
-static char*
-bool_to_num(char *val)
+static const char *
+bool_to_num(const char *val)
 {
-	static char val0[] = "0";
-	static char val1[] = "1";
-	static char val_none[] = "";
-
 	if (!strcmp(val, "0") || !strcmp(val, "off") || !strcmp(val, "false") || !strcmp(val, "disabled"))
-		return val0;
+		return "0";
 	if (!strcmp(val, "1") || !strcmp(val, "on") || !strcmp(val, "true") || !strcmp(val, "enabled"))
-		return val1;
+		return "1";
 
-	return val_none;
+	return "";
 }
 
-static int
+static void
+escape_value(enum dt_type type, const char *val)
+{
+	const char *p;
+
+	switch(type)
+	{
+	case DT_BOOL:
+		printf("%s", bool_to_num(val));
+		break;
+
+	case DT_STRING:
+		printf("'");
+
+		for (p = val; *p; p++)
+			if (*p == '\'')
+				printf("'\"'\"'");
+			else
+				printf("%c", *p);
+
+		printf("'");
+		break;
+
+	default:
+		printf("%s", val);
+		break;
+	}
+}
+
+static void
+export_value(enum dt_type type, const char *name, const char *val)
+{
+	if ((type == DT_INVALID) || !val || !*val)
+	{
+		printf("unset -v %s; ", name);
+		return;
+	}
+
+	printf("%s=", name);
+	escape_value(type, val);
+	printf("; ");
+}
+
+static void
+validate_value(struct uci_ptr *ptr, const char *expr, const char *def)
+{
+	int i = 0;
+	bool empty = true, first = true;
+	enum dt_type type;
+	struct uci_element *e;
+	struct uci_option *opt = ptr->o;
+
+	if (opt->type == UCI_TYPE_LIST)
+	{
+		uci_foreach_element(&opt->v.list, e)
+		{
+			if (!e->name || !*e->name)
+				continue;
+
+			empty = false;
+			break;
+		}
+
+		if (empty)
+		{
+			export_value(DT_STRING, ptr->option, def);
+			return;
+		}
+
+		uci_foreach_element(&opt->v.list, e)
+		{
+			if (!e->name || !*e->name)
+				continue;
+
+			if (first)
+				printf("%s=", ptr->option);
+			else
+				printf("\\ ");
+
+			first = false;
+			type = dt_parse(expr, e->name);
+
+			if (type != DT_INVALID)
+				escape_value(type, e->name);
+
+			fprintf(stderr, "%s.%s.%s[%u]=%s validates as %s with %s\n",
+			        ptr->package, ptr->section, ptr->option, i++, e->name,
+			        expr, type ? "true" : "false");
+		}
+
+		printf("; ");
+	}
+	else
+	{
+		if (!opt->v.string || !*opt->v.string)
+		{
+			export_value(DT_STRING, ptr->option, def);
+			return;
+		}
+
+		type = dt_parse(expr, opt->v.string);
+		export_value(type, ptr->option, opt->v.string);
+
+		fprintf(stderr, "%s.%s.%s=%s validates as %s with %s\n",
+				ptr->package, ptr->section, ptr->option, opt->v.string,
+		        expr, type ? "true" : "false");
+	}
+}
+
+static void
 validate_option(struct uci_context *ctx, char *package, char *section, char *option)
 {
-	char *datatype = strstr(option, ":");
+	char *def, *expr;
 	struct uci_ptr ptr = { 0 };
-	char *val;
-	int ret = 0;
 
-	if (!datatype) {
+	if ((expr = strchr(option, ':')) == NULL)
+	{
 		fprintf(stderr, "%s is not a valid option\n", option);
-		return -1;
+		return;
 	}
 
-	*datatype = '\0';
-	datatype++;
-	val = strstr(datatype, ":");
-	if (val) {
-		*val = '\0';
-		val++;
-	}
+	*expr++ = 0;
+
+	if ((def = strrchr(expr, ':')) != NULL)
+		*def++ = 0;
 
 	ptr.package = package;
 	ptr.section = section;
 	ptr.option = option;
 
-	if (!uci_lookup_ptr(ctx, &ptr, NULL, false))
-		if (ptr.flags & UCI_LOOKUP_COMPLETE)
-			if (ptr.last->type == UCI_TYPE_OPTION)
-				if ( ptr.o->type == UCI_TYPE_STRING)
-					if (ptr.o->v.string)
-						val = ptr.o->v.string;
-
-	if (val) {
-		ret = dt_parse(datatype, val);
-		fprintf(stderr, "%s.%s.%s=%s validates as %s with %s\n", package, section, option,
-			val, datatype, ret ? "true" : "false");
+	if (uci_lookup_ptr(ctx, &ptr, NULL, false) ||
+	    !(ptr.flags & UCI_LOOKUP_COMPLETE) ||
+	    (ptr.last->type != UCI_TYPE_OPTION))
+	{
+		export_value(DT_STRING, option, def);
+		return;
 	}
 
-	if (ret && !strcmp(datatype, "bool"))
-		printf("%s=%s; ", option, bool_to_num(val));
-	else if (ret)
-		printf("%s=%s; ", option, val);
-	else
-		printf("unset -v %s; ", option);
-
-	return ret;
+	validate_value(&ptr, expr, def);
 }
 
 int
