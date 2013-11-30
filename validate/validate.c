@@ -99,7 +99,7 @@ dt_test_string(const char *s, const char *end, const char *value)
 		s++;
 	}
 
-	return (*s == *value || (s > end && *value == 0));
+	return (*s == *value || (s >= end && *value == 0));
 }
 
 static bool
@@ -796,7 +796,7 @@ dt_parse_atom(struct dt_state *s, const char *label, const char *end)
 			{
 				op->next = p + 1;
 				op->type = OP_STRING;
-				op->length = (p - label) - 2;
+				op->length = (p - label) - 1;
 				op->value.string = label + 1;
 				op->nextop = ++s->depth;
 
@@ -951,10 +951,14 @@ dt_step(struct dt_state *s)
 	{
 	case OP_NUMBER:
 		rv = dt_test_number(op->value.number, s->value);
+		if (rv)
+			s->valtype = DT_NUMBER;
 		break;
 
 	case OP_STRING:
 		rv = dt_test_string(op->value.string, op->value.string + op->length, s->value);
+		if (rv)
+			s->valtype = DT_STRING;
 		break;
 
 	case OP_FUNCTION:
