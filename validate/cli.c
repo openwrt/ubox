@@ -177,7 +177,7 @@ main(int argc, char **argv)
 	struct uci_context *ctx;
 	struct uci_package *package;
 	int len = argc - 4;
-	bool rv;
+	enum dt_type rv;
 	int i;
 
 	if (argc == 3) {
