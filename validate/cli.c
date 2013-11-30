@@ -30,6 +30,38 @@ bool_to_num(const char *val)
 	return "";
 }
 
+static bool
+parse_tuple(char *tuple, char **option, char **expr, char **def)
+{
+	char *p;
+	bool esc;
+
+	for (esc = false, p = *option = tuple, *expr = NULL, *def = NULL; *p; p++)
+	{
+		if (!esc && *p == '\\')
+		{
+			esc = true;
+			continue;
+		}
+
+		if (!esc && *p == ':')
+		{
+			*p++ = 0;
+
+			if (!*expr)
+				*expr = p;
+			else if (!*def)
+				*def = p;
+			else
+				break;
+		}
+
+		esc = false;
+	}
+
+	return (*expr != NULL);
+}
+
 static void
 escape_value(enum dt_type type, const char *val)
 {
@@ -142,29 +174,24 @@ validate_value(struct uci_ptr *ptr, const char *expr, const char *def)
 static void
 validate_option(struct uci_context *ctx, char *package, char *section, char *option)
 {
-	char *def, *expr;
+	char *opt, *expr, *def;
 	struct uci_ptr ptr = { 0 };
 
-	if ((expr = strchr(option, ':')) == NULL)
+	if (!parse_tuple(option, &opt, &expr, &def))
 	{
 		fprintf(stderr, "%s is not a valid option\n", option);
 		return;
 	}
 
-	*expr++ = 0;
-
-	if ((def = strrchr(expr, ':')) != NULL)
-		*def++ = 0;
-
 	ptr.package = package;
 	ptr.section = section;
-	ptr.option = option;
+	ptr.option = opt;
 
 	if (uci_lookup_ptr(ctx, &ptr, NULL, false) ||
 	    !(ptr.flags & UCI_LOOKUP_COMPLETE) ||
 	    (ptr.last->type != UCI_TYPE_OPTION))
 	{
-		export_value(DT_STRING, option, def);
+		export_value(DT_STRING, opt, def);
 		return;
 	}
 
@@ -176,6 +203,7 @@ main(int argc, char **argv)
 {
 	struct uci_context *ctx;
 	struct uci_package *package;
+	char *opt, *expr, *def;
 	int len = argc - 4;
 	enum dt_type rv;
 	int i;
@@ -196,18 +224,12 @@ main(int argc, char **argv)
 		printf("json_add_object \"data\"; ");
 
 		for (i = 0; i < len; i++) {
-			char *datatype = strstr(argv[4 + i], ":");
-			char *def;
-
-			if (!datatype)
+			if (!parse_tuple(argv[4 + i], &opt, &expr, &def))
 				continue;
-			*datatype = '\0';
-			datatype++;
-			def = strstr(datatype, ":");
-			if (def)
-				*def = '\0';
-			printf("json_add_string \"%s\" \"%s\"; ", argv[4 + i], datatype);
+
+			printf("json_add_string \"%s\" \"%s\"; ", opt, expr);
 		}
+
 		printf("json_close_object; ");
 		printf("json_close_object; ");
 
