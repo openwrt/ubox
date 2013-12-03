@@ -697,7 +697,12 @@ static int extroot(const char *prefix)
 	sprintf(block_path, "%s/sbin/block", prefix);
 
 	if (stat(block_path, &s))
-		return -1;
+	{
+		sprintf(block_path, "/sbin/block");
+
+		if (stat(block_path, &s))
+			return -1;
+	}
 
 	sprintf(kmod_loader, "/sbin/kmodloader %s/etc/modules-boot.d/ %s", prefix, prefix);
 	system(kmod_loader);
