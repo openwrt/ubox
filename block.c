@@ -36,6 +36,11 @@
 
 #include "libblkid-tiny/libblkid-tiny.h"
 
+#define ERROR(fmt, ...) do { \
+		syslog(LOG_ERR, fmt, ## __VA_ARGS__); \
+		fprintf(stderr, "block: "fmt, ## __VA_ARGS__); \
+	} while (0)
+
 enum {
 	TYPE_MOUNT,
 	TYPE_SWAP,
@@ -402,7 +407,14 @@ static int config_load(char *cfg)
 	}
 
 	if (uci_load(ctx, "fstab", &pkg))
+	{
+		char *err;
+		uci_get_errorstr(ctx, &err, "fstab");
+		ERROR("extroot: failed to load %s/etc/config/%s\n",
+		      cfg ? cfg : "", err);
+		free(err);
 		return -1;
+	}
 
 	vlist_update(&mounts);
 	uci_foreach_element(&pkg->sections, e) {
@@ -579,12 +591,12 @@ static void check_filesystem(struct blkid_struct_probe *pr)
 	char *e2fsck = "/usr/sbin/e2fsck";
 
 	if (strncmp(pr->id->name, "ext", 3)) {
-		fprintf(stderr, "check_filesystem: %s is not supported\n", pr->id->name);
+		ERROR("check_filesystem: %s is not supported\n", pr->id->name);
 		return;
 	}
 
 	if (stat(e2fsck, &statbuf) < 0) {
-		fprintf(stderr, "check_filesystem: %s not found\n", e2fsck);
+		ERROR("check_filesystem: %s not found\n", e2fsck);
 		return;
 	}
 
@@ -597,7 +609,7 @@ static void check_filesystem(struct blkid_struct_probe *pr)
 
 		waitpid(pid, &status, 0);
 		if (WEXITSTATUS(status))
-			fprintf(stderr, "check_filesystem: %s returned %d\n", e2fsck, WEXITSTATUS(status));
+			ERROR("check_filesystem: %s returned %d\n", e2fsck, WEXITSTATUS(status));
 	}
 }
 
@@ -655,7 +667,7 @@ static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 		return -1;
 
 	if (find_mount_point(pr->dev)) {
-		fprintf(stderr, "%s is already mounted\n", pr->dev);
+		ERROR("%s is already mounted\n", pr->dev);
 		return -1;
 	}
 
@@ -680,7 +692,7 @@ static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 		err = mount(pr->dev, target, pr->id->name, m->flags,
 		            (m->options) ? (m->options) : (""));
 		if (err)
-			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
+			ERROR("mounting %s (%s) as %s failed (%d) - %s\n",
 					pr->dev, pr->id->name, target, err, strerror(err));
 		else
 			handle_swapfiles(true);
@@ -699,7 +711,7 @@ static int mount_device(struct blkid_struct_probe *pr, int hotplug)
 
 		err = mount(pr->dev, target, pr->id->name, 0, "");
 		if (err)
-			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
+			ERROR("mounting %s (%s) as %s failed (%d) - %s\n",
 					pr->dev, pr->id->name, target, err, strerror(err));
 		else
 			handle_swapfiles(true);
@@ -732,10 +744,10 @@ static int umount_device(struct blkid_struct_probe *pr)
 
 	err = umount2(mp, MNT_DETACH);
 	if (err)
-		fprintf(stderr, "unmounting %s (%s)  failed (%d) - %s\n",
+		ERROR("unmounting %s (%s)  failed (%d) - %s\n",
 			pr->dev, mp, err, strerror(err));
 	else
-		fprintf(stderr, "unmounted %s (%s)\n",
+		ERROR("unmounted %s (%s)\n",
 			pr->dev, mp);
 
 	return err;
@@ -760,12 +772,12 @@ static int main_hotplug(int argc, char **argv)
 			err = umount2(mount_point, MNT_DETACH);
 
 		if (err)
-			fprintf(stderr, "umount of %s failed (%d) - %s\n",
+			ERROR("umount of %s failed (%d) - %s\n",
 					mount_point, err, strerror(err));
 
 		return 0;
 	} else if (strcmp(action, "add")) {
-		fprintf(stderr, "Unkown action %s\n", action);
+		ERROR("Unkown action %s\n", action);
 
 		return -1;
 	}
@@ -827,7 +839,7 @@ static int check_extroot(char *path)
 			if (stat(tag, &s)) {
 				fp = fopen(tag, "w+");
 				if (!fp) {
-					fprintf(stderr, "extroot: failed to write uuid tag file\n");
+					ERROR("extroot: failed to write uuid tag file\n");
 					/* return 0 to continue boot regardless of error */
 					return 0;
 				}
@@ -838,7 +850,7 @@ static int check_extroot(char *path)
 
 			fp = fopen(tag, "r");
 			if (!fp) {
-				fprintf(stderr, "extroot: failed to open uuid tag file\n");
+				ERROR("extroot: failed to open uuid tag file\n");
 				return -1;
 			}
 
@@ -846,7 +858,7 @@ static int check_extroot(char *path)
 			fclose(fp);
 			if (!strcmp(uuid, pr->uuid))
 				return 0;
-			fprintf(stderr, "extroot: uuid tag does not match rom uuid\n");
+			ERROR("extroot: uuid tag does not match rom uuid\n");
 		}
 	}
 	return -1;
@@ -869,12 +881,15 @@ static int mount_extroot(char *cfg)
 		m = find_block(NULL, NULL, NULL, "/overlay");
 
 	if (!m || !m->extroot)
+	{
+		ERROR("extroot: no root or overlay mount defined\n");
 		return -1;
+	}
 
 	pr = find_block_info(m->uuid, m->label, m->device);
 
 	if (!pr && delay_root){
-		fprintf(stderr, "extroot: is not ready yet, retrying in %u seconds\n", delay_root);
+		ERROR("extroot: is not ready yet, retrying in %u seconds\n", delay_root);
 		sleep(delay_root);
 		mkblkdev();
 		cache_load(0);
@@ -882,7 +897,7 @@ static int mount_extroot(char *cfg)
 	}
 	if (pr) {
 		if (strncmp(pr->id->name, "ext", 3)) {
-			fprintf(stderr, "extroot: %s is not supported, try ext4\n", pr->id->name);
+			ERROR("extroot: %s is not supported, try ext4\n", pr->id->name);
 			return -1;
 		}
 		if (m->overlay)
@@ -895,13 +910,15 @@ static int mount_extroot(char *cfg)
 		err = mount(pr->dev, path, pr->id->name, 0, (m->options) ? (m->options) : (""));
 
 		if (err) {
-			fprintf(stderr, "mounting %s (%s) as %s failed (%d) - %s\n",
+			ERROR("mounting %s (%s) as %s failed (%d) - %s\n",
 					pr->dev, pr->id->name, path, err, strerror(err));
 		} else if (m->overlay) {
 			err = check_extroot(path);
 			if (err)
 				umount(path);
 		}
+	} else {
+		ERROR("extroot: cannot find block device\n");
 	}
 
 	return err;
@@ -926,12 +943,16 @@ static int main_extroot(int argc, char **argv)
 	cache_load(1);
 
 	find_block_mtd("rootfs", fs, sizeof(fs));
-	if (!fs[0])
+	if (!fs[0]) {
+		ERROR("extroot: unable to locate rootfs mtdblock\n");
 		return -2;
+	}
 
 	pr = find_block_info(NULL, NULL, fs);
-	if (!pr)
+	if (!pr) {
+		ERROR("extroot: unable to retrieve rootfs information\n");
 		return -3;
+	}
 
 	find_block_mtd("rootfs_data", fs_data, sizeof(fs_data));
 	if (fs_data[0]) {
@@ -1021,11 +1042,11 @@ static int main_info(int argc, char **argv)
 		struct stat s;
 
 		if (stat(argv[i], &s)) {
-			fprintf(stderr, "failed to stat %s\n", argv[i]);
+			ERROR("failed to stat %s\n", argv[i]);
 			continue;
 		}
 		if (!S_ISBLK(s.st_mode)) {
-			fprintf(stderr, "%s is not a block device\n", argv[i]);
+			ERROR("%s is not a block device\n", argv[i]);
 			continue;
 		}
 		pr = find_block_info(NULL, NULL, argv[i]);
@@ -1065,7 +1086,7 @@ static int main_swapon(int argc, char **argv)
 			lineptr = NULL;
 
 			if (!fp) {
-				fprintf(stderr, "failed to open /proc/swaps\n");
+				ERROR("failed to open /proc/swaps\n");
 				return -1;
 			}
 			while (getline(&lineptr, &s, fp) > 0)
@@ -1080,7 +1101,7 @@ static int main_swapon(int argc, char **argv)
 				if (strcmp(pr->id->name, "swap"))
 					continue;
 				if (swapon(pr->dev, 0))
-					fprintf(stderr, "failed to swapon %s\n", pr->dev);
+					ERROR("failed to swapon %s\n", pr->dev);
 			}
 			return 0;
 		case 'p':
@@ -1098,12 +1119,12 @@ static int main_swapon(int argc, char **argv)
 		return swapon_usage();
 
 	if (stat(argv[optind], &st) || (!S_ISBLK(st.st_mode) && !S_ISREG(st.st_mode))) {
-		fprintf(stderr, "%s is not a block device or file\n", argv[optind]);
+		ERROR("%s is not a block device or file\n", argv[optind]);
 		return -1;
 	}
 	err = swapon(argv[optind], flags);
 	if (err) {
-		fprintf(stderr, "failed to swapon %s (%d)\n", argv[optind], err);
+		ERROR("failed to swapon %s (%d)\n", argv[optind], err);
 		return err;
 	}
 
@@ -1113,7 +1134,7 @@ static int main_swapon(int argc, char **argv)
 static int main_swapoff(int argc, char **argv)
 {
 	if (argc != 2) {
-		fprintf(stderr, "Usage: swapoff [-a] [DEVICE]\n\n"
+		ERROR("Usage: swapoff [-a] [DEVICE]\n\n"
 			"\tStop swapping on DEVICE\n"
 			" -a\tStop swapping on all swap devices\n");
 		return -1;
@@ -1124,7 +1145,7 @@ static int main_swapoff(int argc, char **argv)
 		char line[256];
 
 		if (!fp) {
-			fprintf(stderr, "failed to open /proc/swaps\n");
+			ERROR("failed to open /proc/swaps\n");
 			return -1;
 		}
 		fgets(line, sizeof(line), fp);
@@ -1137,7 +1158,7 @@ static int main_swapoff(int argc, char **argv)
 			*end = '\0';
 			err = swapoff(line);
 			if (err)
-				fprintf(stderr, "failed to swapoff %s (%d)\n", line, err);
+				ERROR("failed to swapoff %s (%d)\n", line, err);
 		}
 		fclose(fp);
 	} else {
@@ -1145,12 +1166,12 @@ static int main_swapoff(int argc, char **argv)
 		int err;
 
 		if (stat(argv[1], &s) || (!S_ISBLK(s.st_mode) && !S_ISREG(s.st_mode))) {
-			fprintf(stderr, "%s is not a block device or file\n", argv[1]);
+			ERROR("%s is not a block device or file\n", argv[1]);
 			return -1;
 		}
 		err = swapoff(argv[1]);
 		if (err) {
-			fprintf(stderr, "fsiled to swapoff %s (%d)\n", argv[1], err);
+			ERROR("fsiled to swapoff %s (%d)\n", argv[1], err);
 			return err;
 		}
 	}
