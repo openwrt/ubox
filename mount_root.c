@@ -707,6 +707,8 @@ static int extroot(const char *prefix)
 	sprintf(kmod_loader, "/sbin/kmodloader %s/etc/modules-boot.d/ %s", prefix, prefix);
 	system(kmod_loader);
 
+	LOG("starting block executable %s\n", block_path);
+
 	pid = fork();
 	if (!pid) {
 		mkdir("/tmp/extroot", 0755);
@@ -753,7 +755,11 @@ static int extroot(const char *prefix)
 					rmdir("/tmp/extroot");
 					return 0;
 				}
+			} else {
+				ERROR("block executable did not set up an overlay\n");
 			}
+		} else {
+			ERROR("block executable failed with code %d\n", WEXITSTATUS(status));
 		}
 	}
 	return -1;
