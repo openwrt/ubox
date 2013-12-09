@@ -303,6 +303,7 @@ int main(int argc, char **argv)
 	const char *ubus_socket = NULL;
 	int ch, ret, subscribe = 0, lines = 0;
 	static struct blob_buf b;
+	int retry = 5;
 
 	while ((ch = getopt(argc, argv, "ufcs:l:r:F:p:S:P:h:")) != -1) {
 		switch (ch) {
@@ -351,19 +352,24 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	ret = ubus_lookup_id(ctx, "log", &id);
-	if (ret)
-		fprintf(stderr, "Failed to find log object: %s\n", ubus_strerror(ret));
+	/* ugly ugly ugly ... we need a real reconnect logic */
+	do {
+		ret = ubus_lookup_id(ctx, "log", &id);
+		if (ret) {
+			fprintf(stderr, "Failed to find log object: %s\n", ubus_strerror(ret));
+			sleep(1);
+			continue;
+		}
+		if (!subscribe || lines) {
+			blob_buf_init(&b, 0);
+			if (lines)
+				blobmsg_add_u32(&b, "lines", lines);
+			ubus_invoke(ctx, id, "read", b.head, read_cb, 0, 3000);
+		}
 
-	if (!subscribe || lines) {
-		blob_buf_init(&b, 0);
-		if (lines)
-			blobmsg_add_u32(&b, "lines", lines);
-		ubus_invoke(ctx, id, "read", b.head, read_cb, 0, 3000);
-	}
-
-	if (subscribe)
-		follow_log(ctx, id);
+		if (subscribe)
+			follow_log(ctx, id);
+	} while (ret && retry--);
 
 	return 0;
 }
