@@ -526,6 +526,11 @@ static int main_insmod(int argc, char **argv)
 		cur += sprintf(cur, "%s", argv[i]);
 	}
 
+	if (!get_module_path(name)) {
+		fprintf(stderr, "Failed to find %s. Maybe it is a built in module ?\n", name);
+		return -1;
+	}
+
 	ret = insert_module(get_module_path(name), options);
 	free(options);
 
