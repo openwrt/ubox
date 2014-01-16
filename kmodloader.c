@@ -111,8 +111,7 @@ static char* get_module_name(char *path)
 	return name;
 }
 
-#if __WORDSIZE == 64
-static int elf_find_section(char *map, const char *section, unsigned int *offset, unsigned int *size)
+static int elf64_find_section(char *map, const char *section, unsigned int *offset, unsigned int *size)
 {
 	const char *secnames;
 	Elf64_Ehdr *e;
@@ -133,8 +132,8 @@ static int elf_find_section(char *map, const char *section, unsigned int *offset
 
 	return -1;
 }
-#else
-static int elf_find_section(char *map, const char *section, unsigned int *offset, unsigned int *size)
+
+static int elf32_find_section(char *map, const char *section, unsigned int *offset, unsigned int *size)
 {
 	const char *secnames;
 	Elf32_Ehdr *e;
@@ -155,7 +154,20 @@ static int elf_find_section(char *map, const char *section, unsigned int *offset
 
 	return -1;
 }
-#endif
+
+static int elf_find_section(char *map, const char *section, unsigned int *offset, unsigned int *size)
+{
+	int clazz = map[EI_CLASS];
+
+	if (clazz == ELFCLASS32)
+		return elf32_find_section(map, section, offset, size);
+	else if (clazz == ELFCLASS64)
+		return elf64_find_section(map, section, offset, size);
+
+	LOG("unknown elf format %d\n", clazz);
+
+	return -1;
+}
 
 static struct module *
 alloc_module(const char *name, const char *depends, int size)
