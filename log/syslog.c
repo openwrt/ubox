@@ -274,8 +274,11 @@ log_buffer_init(int size)
 }
 
 void
-log_init(void)
+log_init(int _log_size)
 {
+	if (_log_size > 0)
+		log_size = _log_size;
+
 	regcomp(&pat_prio, "^<([0-9]*)>(.*)", REG_EXTENDED);
 	regcomp(&pat_tstamp, "^\[[ 0]*([0-9]*).([0-9]*)] (.*)", REG_EXTENDED);
 
