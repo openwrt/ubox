@@ -13,7 +13,6 @@
 
 #include <stdio.h>
 #include <syslog.h>
-#include <unistd.h>
 
 #include <linux/types.h>
 
@@ -170,24 +169,12 @@ ubus_connect_cb(struct uloop_timeout *timeout)
 int
 main(int argc, char **argv)
 {
-	int ch, log_size = 0;
-
 	signal(SIGPIPE, SIG_IGN);
 
-	while ((ch = getopt(argc, argv, "S:")) != -1) {
-		switch (ch) {
-		case 'S':
-			log_size = atoi(optarg);
-			if (log_size < 1)
-				log_size = 1;
-			log_size *= 1024;
-			break;
-		}
-	}
 	uloop_init();
 	ubus_timer.cb = ubus_connect_cb;
 	uloop_timeout_set(&ubus_timer, 1000);
-	log_init(log_size);
+	log_init();
 	uloop_run();
 	if (_ctx)
 		ubus_free(_ctx);

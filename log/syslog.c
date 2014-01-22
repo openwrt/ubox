@@ -30,8 +30,6 @@
 #include <libubox/usock.h>
 #include <libubox/ustream.h>
 
-#include <ubusmsg.h>
-
 #include "syslog.h"
 
 #define LOG_DEFAULT_SIZE	(16 * 1024)
@@ -276,15 +274,8 @@ log_buffer_init(int size)
 }
 
 void
-log_init(int _log_size)
+log_init(void)
 {
-	if (_log_size > 0)
-		log_size = _log_size;
-
-	/* reserve 512 bytes for protocol overhead */
-	if (log_size > (UBUS_MAX_MSGLEN -  512))
-		log_size = UBUS_MAX_MSGLEN - 512;
-
 	regcomp(&pat_prio, "^<([0-9]*)>(.*)", REG_EXTENDED);
 	regcomp(&pat_tstamp, "^\[[ 0]*([0-9]*).([0-9]*)] (.*)", REG_EXTENDED);
 

@@ -30,7 +30,7 @@ struct log_head {
 	char data[];
 };
 
-void log_init(int log_size);
+void log_init(void);
 void log_shutdown(void);
 
 typedef void (*log_list_cb)(struct log_head *h);
