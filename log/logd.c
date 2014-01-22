@@ -25,8 +25,7 @@
 int debug = 0;
 static int notify;
 static struct blob_buf b;
-static struct ubus_context *_ctx;
-static struct uloop_timeout ubus_timer;
+static struct ubus_auto_conn conn;
 
 static const struct blobmsg_policy read_policy =
 	{ .name = "lines", .type = BLOBMSG_TYPE_INT32 };
@@ -126,44 +125,20 @@ ubus_notify_log(struct log_head *l)
 	blobmsg_add_u32(&b, "source", l->source);
 	blobmsg_add_u64(&b, "time", (((__u64) l->ts.tv_sec) * 1000) + (l->ts.tv_nsec / 1000000));
 
-	ret = ubus_notify(_ctx, &log_object, l->data, b.head, -1);
+	ret = ubus_notify(&conn.ctx, &log_object, l->data, b.head, -1);
 	if (ret)
 		fprintf(stderr, "Failed to notify log: %s\n", ubus_strerror(ret));
 }
 
 static void
-ubus_reconnect_cb(struct uloop_timeout *timeout)
-{
-	if (!ubus_reconnect(_ctx, NULL))
-		ubus_add_uloop(_ctx);
-	else
-		uloop_timeout_set(timeout, 1000);
-}
-
-static void
-ubus_disconnect_cb(struct ubus_context *ctx)
-{
-	ubus_timer.cb = ubus_reconnect_cb;
-	uloop_timeout_set(&ubus_timer, 1000);
-}
-
-static void
-ubus_connect_cb(struct uloop_timeout *timeout)
+ubus_connect_handler(struct ubus_context *ctx)
 {
 	int ret;
 
-	_ctx = ubus_connect(NULL);
-	if (!_ctx) {
-		uloop_timeout_set(timeout, 1000);
-		fprintf(stderr, "failed to connect to ubus\n");
-		return;
-	}
-	_ctx->connection_lost = ubus_disconnect_cb;
-	ret = ubus_add_object(_ctx, &log_object);
+	ret = ubus_add_object(ctx, &log_object);
 	if (ret)
 		fprintf(stderr, "Failed to add object: %s\n", ubus_strerror(ret));
 	fprintf(stderr, "log: connected to ubus\n");
-	ubus_add_uloop(_ctx);
 }
 
 int
@@ -172,12 +147,10 @@ main(int argc, char **argv)
 	signal(SIGPIPE, SIG_IGN);
 
 	uloop_init();
-	ubus_timer.cb = ubus_connect_cb;
-	uloop_timeout_set(&ubus_timer, 1000);
 	log_init();
+	conn.cb = ubus_connect_handler;
+	ubus_auto_connect(&conn);
 	uloop_run();
-	if (_ctx)
-		ubus_free(_ctx);
 	log_shutdown();
 	uloop_done();
 
