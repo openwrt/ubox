@@ -55,6 +55,7 @@ struct module {
 
 	char *name;
 	char *depends;
+	char *opts;
 
 	int size;
 	int usage;
@@ -182,6 +183,7 @@ alloc_module(const char *name, const char *depends, int size)
 		return NULL;
 
 	m->avl.key = m->name = strcpy(_name, name);
+	m->opts = 0;
 
 	if (depends) {
 		m->depends = strcpy(_dep, depends);
@@ -467,7 +469,7 @@ static int load_modprobe(void)
 		todo = 0;
 		avl_for_each_element(&modules, m, avl) {
 			if ((m->state == PROBE) && (!deps_available(m, 0))) {
-				if (!insert_module(get_module_path(m->name), "")) {
+				if (!insert_module(get_module_path(m->name), (m->opts) ? (m->opts) : (""))) {
 					m->state = LOADED;
 					m->error = 0;
 					loaded++;
@@ -726,6 +728,8 @@ static int main_loader(int argc, char **argv)
 			if (!m || (m->state == LOADED))
 				continue;
 
+			if (opts)
+				m->opts = strdup(opts);
 			m->state = PROBE;
 			if (basename(gl.gl_pathv[j])[0] - '0' <= 9)
 				load_modprobe();
