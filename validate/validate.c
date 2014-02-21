@@ -21,6 +21,11 @@
 #include <netinet/ether.h>
 #include <sys/stat.h>
 
+#include <sys/types.h>
+#include <regex.h>
+
+#include <uci.h>
+
 #include "libvalidate.h"
 
 enum dt_optype {
@@ -48,6 +53,7 @@ struct dt_op {
 struct dt_state {
 	int pos;
 	int depth;
+	struct uci_context *ctx;
 	const char *value;
 	enum dt_type valtype;
 	struct dt_op stack[32];
@@ -107,6 +113,10 @@ dt_step(struct dt_state *s);
 
 static bool
 dt_call(struct dt_state *s);
+
+#define dt_getint(n, v) \
+	((n < nargs && s->stack[s->pos + n].type == OP_NUMBER) \
+		? (v = s->stack[s->pos + n].value.number, 1) : 0)
 
 static bool
 dt_type_or(struct dt_state *s, int nargs)
@@ -188,15 +198,13 @@ dt_type_list(struct dt_state *s, int nargs)
 static bool
 dt_type_min(struct dt_state *s, int nargs)
 {
-	int n;
+	int n, min;
 	char *e;
 
-	if (nargs >= 1 && s->stack[s->pos].type == OP_NUMBER)
+	if (dt_getint(0, min))
 	{
 		n = strtol(s->value, &e, 0);
-
-		return (e > s->value && *e == 0 &&
-		        n >= s->stack[s->pos].value.number);
+		return (e > s->value && *e == 0 && n >= min);
 	}
 
 	return false;
@@ -205,15 +213,13 @@ dt_type_min(struct dt_state *s, int nargs)
 static bool
 dt_type_max(struct dt_state *s, int nargs)
 {
-	int n;
+	int n, max;
 	char *e;
 
-	if (nargs >= 1 && s->stack[s->pos].type == OP_NUMBER)
+	if (dt_getint(0, max))
 	{
 		n = strtol(s->value, &e, 0);
-
-		return (e > s->value && *e == 0 &&
-		        n <= s->stack[s->pos].value.number);
+		return (e > s->value && *e == 0 && n <= max);
 	}
 
 	return false;
@@ -222,18 +228,13 @@ dt_type_max(struct dt_state *s, int nargs)
 static bool
 dt_type_range(struct dt_state *s, int nargs)
 {
-	int n;
+	int n, min, max;
 	char *e;
 
-	if (nargs >= 2 &&
-	    s->stack[s->pos].type == OP_NUMBER &&
-	    s->stack[s->pos + 1].type == OP_NUMBER)
+	if (dt_getint(0, min) && dt_getint(1, max))
 	{
 		n = strtol(s->value, &e, 0);
-
-		return (e > s->value && *e == 0 &&
-		        n >= s->stack[s->pos].value.number &&
-		        n <= s->stack[s->pos + 1].value.number);
+		return (e > s->value && *e == 0 && n >= min && n <= max);
 	}
 
 	return false;
@@ -242,8 +243,10 @@ dt_type_range(struct dt_state *s, int nargs)
 static bool
 dt_type_minlen(struct dt_state *s, int nargs)
 {
-	if (nargs >= 1 && s->stack[s->pos].type == OP_NUMBER)
-		return (strlen(s->value) >= s->stack[s->pos].value.number);
+	int min;
+
+	if (dt_getint(0, min))
+		return (strlen(s->value) >= min);
 
 	return false;
 }
@@ -251,8 +254,10 @@ dt_type_minlen(struct dt_state *s, int nargs)
 static bool
 dt_type_maxlen(struct dt_state *s, int nargs)
 {
-	if (nargs >= 1 && s->stack[s->pos].type == OP_NUMBER)
-		return (strlen(s->value) <= s->stack[s->pos].value.number);
+	int max;
+
+	if (dt_getint(0, max))
+		return (strlen(s->value) <= max);
 
 	return false;
 }
@@ -260,11 +265,11 @@ dt_type_maxlen(struct dt_state *s, int nargs)
 static bool
 dt_type_rangelen(struct dt_state *s, int nargs)
 {
-	if (nargs >= 2 &&
-	    s->stack[s->pos].type == OP_NUMBER &&
-	    s->stack[s->pos + 1].type == OP_NUMBER)
-		return (strlen(s->value) >= s->stack[s->pos].value.number &&
-				strlen(s->value) <= s->stack[s->pos + 1].value.number);
+	int min, max;
+	int len = strlen(s->value);
+
+	if (dt_getint(0, min) && dt_getint(1, max))
+		return (len >= min && len <= max);
 
 	return false;
 }
@@ -273,8 +278,13 @@ static bool
 dt_type_int(struct dt_state *s, int nargs)
 {
 	char *e;
+	int base = 0;
 
-	strtol(s->value, &e, 0);
+	if (!isxdigit(*s->value) && *s->value != '-')
+		return false;
+
+	dt_getint(0, base);
+	strtol(s->value, &e, base);
 
 	return (e > s->value && *e == 0);
 }
@@ -282,12 +292,16 @@ dt_type_int(struct dt_state *s, int nargs)
 static bool
 dt_type_uint(struct dt_state *s, int nargs)
 {
-	int n;
 	char *e;
+	int base = 0;
 
-	n = strtol(s->value, &e, 0);
+	if (!isxdigit(*s->value))
+		return false;
 
-	return (e > s->value && *e == 0 && n >= 0);
+	dt_getint(0, base);
+	strtoul(s->value, &e, base);
+
+	return (e > s->value && *e == 0);
 }
 
 static bool
@@ -330,6 +344,38 @@ dt_type_bool(struct dt_state *s, int nargs)
 static bool
 dt_type_string(struct dt_state *s, int nargs)
 {
+	int min, max;
+	int len = strlen(s->value);
+
+	if (dt_getint(0, min) && (len < min))
+		return false;
+
+	if (dt_getint(1, max) && (len > max))
+		return false;
+
+	return true;
+}
+
+static bool
+dt_type_hexstring(struct dt_state *s, int nargs)
+{
+	int min, max;
+	int len = strlen(s->value);
+	const char *p;
+
+	if (len % 2)
+		return false;
+
+	if (dt_getint(0, min) && (len < min))
+		return false;
+
+	if (dt_getint(1, max) && (len > max))
+		return false;
+
+	for (p = s->value; *p; p++)
+		if (!isxdigit(*p))
+			return false;
+
 	return true;
 }
 
@@ -684,6 +730,156 @@ dt_type_file(struct dt_state *s, int nargs)
 	return (!stat(s->value, &st) && S_ISREG(st.st_mode));
 }
 
+static bool
+dt_type_regex(struct dt_state *s, int nargs)
+{
+	bool rv;
+	int relen;
+	regex_t pattern;
+	char *re = NULL;
+
+	if (nargs < 1 || s->stack[s->pos].type != OP_STRING)
+		return false;
+
+	relen = s->stack[s->pos].length;
+	re = alloca(relen + 3);
+
+	if (!re)
+		return false;
+
+	memset(re, 0, relen + 3);
+	memcpy(re + 1, s->stack[s->pos].value.string, relen);
+
+	re[0] = '^';
+	re[relen + 1] = '$';
+
+	if (regcomp(&pattern, re, REG_EXTENDED | REG_NOSUB))
+		return false;
+
+	rv = !regexec(&pattern, s->value, 0, NULL, 0);
+
+	regfree(&pattern);
+
+	return rv;
+}
+
+static void *
+dt_uci_lookup(struct dt_state *s, const char *pkg,
+              const char *sct, const char *opt, enum uci_type type)
+{
+	struct uci_ptr ptr = {
+		.package = pkg,
+		.section = sct,
+		.option  = opt
+	};
+
+	if (!s->ctx || uci_lookup_ptr(s->ctx, &ptr, NULL, false) ||
+	    !(ptr.flags & UCI_LOOKUP_COMPLETE))
+		return NULL;
+
+	if (ptr.last->type != type)
+		return NULL;
+
+	switch (type)
+	{
+	case UCI_TYPE_PACKAGE:
+		return uci_to_package(ptr.last);
+
+	case UCI_TYPE_SECTION:
+		return uci_to_section(ptr.last);
+
+	case UCI_TYPE_OPTION:
+		return uci_to_option(ptr.last);
+
+	default:
+		return NULL;
+	}
+}
+
+static bool
+dt_uci_cmp(struct dt_state *s,
+           const char *pkg, const char *sct, const char *opt)
+{
+	struct uci_element *e;
+	struct uci_option *o = dt_uci_lookup(s, pkg, sct, opt, UCI_TYPE_OPTION);
+
+	if (!o)
+		return false;
+
+	switch (o->type)
+	{
+	case UCI_TYPE_STRING:
+		if (!strcmp(s->value, o->v.string))
+			return true;
+		break;
+
+	case UCI_TYPE_LIST:
+		uci_foreach_element(&o->v.list, e)
+			if (!strcmp(s->value, e->name))
+				return true;
+		break;
+	}
+
+	return false;
+}
+
+static bool
+dt_type_uci(struct dt_state *s, int nargs)
+{
+	int i, len;
+	struct uci_element *e;
+	struct uci_package *p;
+	char *cso[3] = { };
+
+	if (!s->ctx)
+		return false;
+
+	for (i = 0; i < nargs && i < 3; i++)
+	{
+		if (s->stack[s->pos + i].type != OP_STRING)
+			continue;
+
+		len = s->stack[s->pos + i].length;
+		cso[i] = alloca(len + 1);
+
+		if (!cso[i])
+			continue;
+
+		memset(cso[i], 0, len + 1);
+		memcpy(cso[i], s->stack[s->pos + i].value.string, len);
+	}
+
+	if (!cso[0] || !cso[1] || (*cso[1] != '@' && !cso[2]))
+		return false;
+
+	if (*cso[1] != '@')
+		return dt_uci_cmp(s, cso[0], cso[1], cso[2]);
+
+	p = dt_uci_lookup(s, cso[0], NULL, NULL, UCI_TYPE_PACKAGE);
+
+	if (!p)
+		return false;
+
+	uci_foreach_element(&p->sections, e)
+	{
+		if (strcmp(uci_to_section(e)->type, cso[1] + 1))
+			continue;
+
+		if (!cso[2])
+		{
+			if (!strcmp(s->value, e->name))
+				return true;
+		}
+		else
+		{
+			if (dt_uci_cmp(s, cso[0], e->name, cso[2]))
+				return true;
+		}
+	}
+
+	return false;
+}
+
 
 static struct dt_fun dt_types[] = {
 	{ "or",				DT_INVALID,		dt_type_or			},
@@ -703,6 +899,7 @@ static struct dt_fun dt_types[] = {
 	{ "ufloat",			DT_NUMBER,		dt_type_ufloat		},
 	{ "bool",			DT_BOOL,		dt_type_bool		},
 	{ "string",			DT_STRING,		dt_type_string		},
+	{ "hexstring",		DT_STRING,		dt_type_hexstring	},
 	{ "ip4addr",		DT_STRING,		dt_type_ip4addr		},
 	{ "ip6addr",		DT_STRING,		dt_type_ip6addr		},
 	{ "ipaddr",			DT_STRING,		dt_type_ipaddr		},
@@ -727,6 +924,8 @@ static struct dt_fun dt_types[] = {
 	{ "directory",		DT_STRING,		dt_type_directory	},
 	{ "device",			DT_STRING,		dt_type_device		},
 	{ "file",			DT_STRING,		dt_type_file		},
+	{ "regex",			DT_STRING,		dt_type_regex		},
+	{ "uci",			DT_STRING,		dt_type_uci			},
 
 	{ }
 };
@@ -996,6 +1195,8 @@ dt_call(struct dt_state *s)
 enum dt_type
 dt_parse(const char *code, const char *value)
 {
+	enum dt_type rv = DT_INVALID;
+
 	struct dt_state s = {
 		.depth = 1,
 		.stack = {
@@ -1013,10 +1214,14 @@ dt_parse(const char *code, const char *value)
 	if (!dt_parse_list(&s, code, code + strlen(code)))
 		return false;
 
+	s.ctx = uci_alloc_context();
 	s.value = value;
 
 	if (dt_call(&s))
-		return s.valtype;
+		rv = s.valtype;
 
-	return DT_INVALID;
+	if (s.ctx)
+		uci_free_context(s.ctx);
+
+	return rv;
 }
