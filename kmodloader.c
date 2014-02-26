@@ -540,7 +540,9 @@ static int main_insmod(int argc, char **argv)
 		cur += sprintf(cur, "%s", argv[i]);
 	}
 
-	if (!get_module_path(name)) {
+	if (get_module_path(argv[1])) {
+		name = argv[1];
+	} else if (!get_module_path(name)) {
 		fprintf(stderr, "Failed to find %s. Maybe it is a built in module ?\n", name);
 		return -1;
 	}
