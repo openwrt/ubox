@@ -12,20 +12,23 @@
  */
 
 #include <stdio.h>
+#include <unistd.h>
 #include <syslog.h>
 
 #include <linux/types.h>
 
 #include <libubox/uloop.h>
 #include <libubox/blobmsg.h>
+#include <libubox/list.h>
+#include <libubox/ustream.h>
 #include <libubus.h>
 
 #include "syslog.h"
 
 int debug = 0;
-static int notify;
 static struct blob_buf b;
 static struct ubus_auto_conn conn;
+static LIST_HEAD(clients);
 
 static const struct blobmsg_policy read_policy =
 	{ .name = "lines", .type = BLOBMSG_TYPE_INT32 };
@@ -33,15 +36,50 @@ static const struct blobmsg_policy read_policy =
 static const struct blobmsg_policy write_policy =
 	{ .name = "event", .type = BLOBMSG_TYPE_STRING };
 
+struct client {
+	struct list_head list;
+
+	struct ustream_fd s;
+	int fd;
+};
+
+static void
+client_close(struct ustream *s)
+{
+	struct client *cl = container_of(s, struct client, s.stream);
+
+	list_del(&cl->list);
+	ustream_free(s);
+	close(cl->fd);
+	free(cl);
+}
+
+static void
+client_notify_write(struct ustream *s, int bytes)
+{
+	if (s->w.data_bytes < 128 && ustream_read_blocked(s))
+		ustream_set_read_blocked(s, false);
+}
+
+static void client_notify_state(struct ustream *s)
+{
+	if (!s->eof)
+		return;
+
+	if (!s->w.data_bytes)
+		return client_close(s);
+}
+
 static int
 read_log(struct ubus_context *ctx, struct ubus_object *obj,
 		struct ubus_request_data *req, const char *method,
 		struct blob_attr *msg)
 {
+	struct client *cl;
 	struct blob_attr *tb;
 	struct log_head *l;
-	void *lines, *entry;
 	int count = 0;
+	int fds[2];
 
 	if (msg) {
 		blobmsg_parse(&read_policy, 1, &tb, blob_data(msg), blob_len(msg));
@@ -49,24 +87,27 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 			count = blobmsg_get_u32(tb);
 	}
 
-	blob_buf_init(&b, 0);
-	lines = blobmsg_open_array(&b, "lines");
+	pipe(fds);
+	ubus_request_set_fd(ctx, req, fds[0]);
 
+	cl = calloc(1, sizeof(*cl));
+	cl->s.stream.notify_write = client_notify_write;
+	cl->s.stream.notify_state = client_notify_state;
+	cl->fd = fds[1];
+	ustream_fd_init(&cl->s, cl->fd);
+	list_add(&cl->list, &clients);
 	l = log_list(count, NULL);
-
-	while (l) {
-		entry = blobmsg_open_table(&b, NULL);
+	while ((!tb || count) && l) {
+		blob_buf_init(&b, 0);
 		blobmsg_add_string(&b, "msg", l->data);
 		blobmsg_add_u32(&b, "id", l->id);
 		blobmsg_add_u32(&b, "priority", l->priority);
 		blobmsg_add_u32(&b, "source", l->source);
 		blobmsg_add_u64(&b, "time", l->ts.tv_sec);
-		blobmsg_close_table(&b, entry);
 		l = log_list(count, l);
+		if (ustream_write(&cl->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false) <= 0)
+			break;
 	}
-	blobmsg_close_table(&b, lines);
-	ubus_send_reply(ctx, req, b.head);
-
 	return 0;
 }
 
@@ -89,12 +130,6 @@ write_log(struct ubus_context *ctx, struct ubus_object *obj,
 	return 0;
 }
 
-static void
-log_subscribe_cb(struct ubus_context *ctx, struct ubus_object *obj)
-{
-	notify = obj->has_subscribers;
-}
-
 static const struct ubus_method log_methods[] = {
 	{ .name = "read", .handler = read_log, .policy = &read_policy, .n_policy = 1 },
 	{ .name = "write", .handler = write_log, .policy = &write_policy, .n_policy = 1 },
@@ -108,26 +143,25 @@ static struct ubus_object log_object = {
 	.type = &log_object_type,
 	.methods = log_methods,
 	.n_methods = ARRAY_SIZE(log_methods),
-	.subscribe_cb = log_subscribe_cb,
 };
 
 void
 ubus_notify_log(struct log_head *l)
 {
-	int ret;
+	struct client *c;
 
-	if (!notify)
+	if (list_empty(&clients))
 		return;
 
-	blob_buf_init(&b, 0);
-	blobmsg_add_u32(&b, "id", l->id);
-	blobmsg_add_u32(&b, "priority", l->priority);
-	blobmsg_add_u32(&b, "source", l->source);
-	blobmsg_add_u64(&b, "time", (((__u64) l->ts.tv_sec) * 1000) + (l->ts.tv_nsec / 1000000));
-
-	ret = ubus_notify(&conn.ctx, &log_object, l->data, b.head, -1);
-	if (ret)
-		fprintf(stderr, "Failed to notify log: %s\n", ubus_strerror(ret));
+	list_for_each_entry(c, &clients, list) {
+		blob_buf_init(&b, 0);
+		blobmsg_add_string(&b, "msg", l->data);
+		blobmsg_add_u32(&b, "id", l->id);
+		blobmsg_add_u32(&b, "priority", l->priority);
+		blobmsg_add_u32(&b, "source", l->source);
+		blobmsg_add_u64(&b, "time", (((__u64) l->ts.tv_sec) * 1000) + (l->ts.tv_nsec / 1000000));
+		ustream_write(&c->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false);
+	}
 }
 
 static void
