@@ -57,17 +57,12 @@ client_close(struct ustream *s)
 static void
 client_notify_write(struct ustream *s, int bytes)
 {
-	if (s->w.data_bytes < 128 && ustream_read_blocked(s))
-		ustream_set_read_blocked(s, false);
+	client_close(s);
 }
 
 static void client_notify_state(struct ustream *s)
 {
-	if (!s->eof)
-		return;
-
-	if (!s->w.data_bytes)
-		return client_close(s);
+	return client_close(s);
 }
 
 static int
@@ -89,7 +84,6 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 
 	pipe(fds);
 	ubus_request_set_fd(ctx, req, fds[0]);
-
 	cl = calloc(1, sizeof(*cl));
 	cl->s.stream.notify_write = client_notify_write;
 	cl->s.stream.notify_state = client_notify_state;
