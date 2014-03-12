@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <syslog.h>
+#include <unistd.h>
 
 #include <linux/types.h>
 
@@ -172,10 +173,22 @@ ubus_connect_handler(struct ubus_context *ctx)
 int
 main(int argc, char **argv)
 {
+	int ch, log_size = 16;
+
 	signal(SIGPIPE, SIG_IGN);
+	while ((ch = getopt(argc, argv, "S:")) != -1) {
+		switch (ch) {
+		case 'S':
+			log_size = atoi(optarg);
+			if (log_size < 1)
+				log_size = 16;
+			break;
+		}
+	}
+	log_size *= 1024;
 
 	uloop_init();
-	log_init();
+	log_init(log_size);
 	conn.cb = ubus_connect_handler;
 	ubus_auto_connect(&conn);
 	uloop_run();
