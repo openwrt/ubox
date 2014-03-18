@@ -98,7 +98,7 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 		blobmsg_add_u32(&b, "id", l->id);
 		blobmsg_add_u32(&b, "priority", l->priority);
 		blobmsg_add_u32(&b, "source", l->source);
-		blobmsg_add_u64(&b, "time", l->ts.tv_sec);
+		blobmsg_add_u64(&b, "time", l->ts.tv_sec * 1000LL);
 		l = log_list(count, l);
 		if (ustream_write(&cl->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false) <= 0)
 			break;
