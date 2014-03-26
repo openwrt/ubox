@@ -17,27 +17,6 @@ IF(DEBUG)
   ADD_DEFINITIONS(-DDEBUG -g3)
 ENDIF()
 
-ADD_EXECUTABLE(mount_root mount_root.c)
-TARGET_LINK_LIBRARIES(mount_root ${LIBS})
-
-INSTALL(TARGETS mount_root
-	RUNTIME DESTINATION sbin
-)
-
-ADD_EXECUTABLE(block block.c
-		libblkid-tiny/libblkid-tiny.c
-		libblkid-tiny/mkdev.c
-		libblkid-tiny/ext.c
-		libblkid-tiny/jffs2.c
-		libblkid-tiny/vfat.c
-		libblkid-tiny/swap.c
-		libblkid-tiny/squashfs.c)
-TARGET_LINK_LIBRARIES(block ${LIBS} blobmsg_json)
-
-INSTALL(TARGETS block
-	RUNTIME DESTINATION sbin
-)
-
 ADD_EXECUTABLE(kmodloader kmodloader.c)
 TARGET_LINK_LIBRARIES(kmodloader ${LIBS})
 
