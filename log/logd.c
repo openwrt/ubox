@@ -58,12 +58,11 @@ client_close(struct ustream *s)
 static void
 client_notify_write(struct ustream *s, int bytes)
 {
-	client_close(s);
 }
 
 static void client_notify_state(struct ustream *s)
 {
-	return client_close(s);
+	client_close(s);
 }
 
 static int
