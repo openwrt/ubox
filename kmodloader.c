@@ -420,7 +420,7 @@ static int insert_module(char *path, const char *options)
 
 	data = malloc(s.st_size);
 	if (read(fd, data, s.st_size) == s.st_size)
-		ret = syscall(__NR_init_module, data, s.st_size, options);
+		ret = syscall(__NR_init_module, data, (unsigned long) s.st_size, options);
 	else
 		LOG("failed to read full module %s\n", path);
 
