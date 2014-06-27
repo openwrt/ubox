@@ -330,8 +330,8 @@ dt_type_bool(struct dt_state *s, int nargs)
 {
 	int i;
 	const char *values[] = {
-		"0", "off", "false", "no",
-		"1", "on", "true", "yes"
+		"0", "off", "false", "no", "disabled",
+		"1", "on", "true", "yes", "enabled"
 	};
 
 	for (i = 0; i < sizeof(values) / sizeof(values[0]); i++)
