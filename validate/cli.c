@@ -22,9 +22,9 @@ print_usage(char *argv)
 static const char *
 bool_to_num(const char *val)
 {
-	if (!strcmp(val, "0") || !strcmp(val, "off") || !strcmp(val, "false") || !strcmp(val, "disabled"))
+	if (!strcmp(val, "0") || !strcmp(val, "off") || !strcmp(val, "false") || !strcmp(val, "no") || !strcmp(val, "disabled"))
 		return "0";
-	if (!strcmp(val, "1") || !strcmp(val, "on") || !strcmp(val, "true") || !strcmp(val, "enabled"))
+	if (!strcmp(val, "1") || !strcmp(val, "on") || !strcmp(val, "true") || !strcmp(val, "yes") || !strcmp(val, "enabled"))
 		return "1";
 
 	return "";
