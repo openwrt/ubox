@@ -105,12 +105,12 @@ export_value(enum dt_type type, const char *name, const char *val)
 	printf("; ");
 }
 
-static void
+static int
 validate_value(struct uci_ptr *ptr, const char *expr, const char *def)
 {
 	int i = 0;
 	bool empty = true, first = true;
-	enum dt_type type;
+	enum dt_type type = DT_INVALID;
 	struct uci_element *e;
 	struct uci_option *opt = ptr->o;
 
@@ -128,7 +128,7 @@ validate_value(struct uci_ptr *ptr, const char *expr, const char *def)
 		if (empty)
 		{
 			export_value(DT_STRING, ptr->option, def);
-			return;
+			return 0;
 		}
 
 		uci_foreach_element(&opt->v.list, e)
@@ -159,7 +159,7 @@ validate_value(struct uci_ptr *ptr, const char *expr, const char *def)
 		if (!opt->v.string || !*opt->v.string)
 		{
 			export_value(DT_STRING, ptr->option, def);
-			return;
+			return 0;
 		}
 
 		type = dt_parse(expr, opt->v.string);
@@ -169,9 +169,10 @@ validate_value(struct uci_ptr *ptr, const char *expr, const char *def)
 				ptr->package, ptr->section, ptr->option, opt->v.string,
 		        expr, type ? "true" : "false");
 	}
+	return type ? 0 : -1;
 }
 
-static void
+static int
 validate_option(struct uci_context *ctx, char *package, char *section, char *option)
 {
 	char *opt, *expr, *def;
@@ -180,7 +181,7 @@ validate_option(struct uci_context *ctx, char *package, char *section, char *opt
 	if (!parse_tuple(option, &opt, &expr, &def))
 	{
 		fprintf(stderr, "%s is not a valid option\n", option);
-		return;
+		return -1;
 	}
 
 	ptr.package = package;
@@ -192,10 +193,10 @@ validate_option(struct uci_context *ctx, char *package, char *section, char *opt
 	    (ptr.last->type != UCI_TYPE_OPTION))
 	{
 		export_value(DT_STRING, opt, def);
-		return;
+		return 0;
 	}
 
-	validate_value(&ptr, expr, def);
+	return validate_value(&ptr, expr, def);
 }
 
 int
@@ -206,7 +207,7 @@ main(int argc, char **argv)
 	char *opt, *expr, *def;
 	int len = argc - 4;
 	enum dt_type rv;
-	int i;
+	int i, rc;
 
 	if (argc == 3) {
 		rv = dt_parse(argv[1], argv[2]);
@@ -243,8 +244,12 @@ main(int argc, char **argv)
 	if (uci_load(ctx, argv[1], &package))
 		return -1;
 
-	for (i = 0; i < len; i++)
-		validate_option(ctx, argv[1], argv[3], argv[4 + i]);
+	rc = 0;
+	for (i = 0; i < len; i++) {
+		if (validate_option(ctx, argv[1], argv[3], argv[4 + i])) {
+			rc = -1;
+		}
+	}
 
-	return 0;
+	return rc;
 }
