@@ -164,8 +164,10 @@ ubus_connect_handler(struct ubus_context *ctx)
 	int ret;
 
 	ret = ubus_add_object(ctx, &log_object);
-	if (ret)
+	if (ret) {
 		fprintf(stderr, "Failed to add object: %s\n", ubus_strerror(ret));
+		exit(1);
+	}
 	fprintf(stderr, "log: connected to ubus\n");
 }
 
