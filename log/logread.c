@@ -135,9 +135,12 @@ static int log_notify(struct blob_attr *msg)
 	if (log_type == LOG_NET) {
 		int err;
 
-		*buf = '\0';
-		if (hostname)
-			snprintf(buf, sizeof(buf), "%s ", hostname);
+		snprintf(buf, sizeof(buf), "<%u>", p);
+		strncat(buf, c + 4, 16);
+		if (hostname) {
+			strncat(buf, hostname, sizeof(buf));
+			strncat(buf, " ", sizeof(buf));
+		}
 		if (log_prefix) {
 			strncat(buf, log_prefix, sizeof(buf));
 			strncat(buf, ": ", sizeof(buf));
