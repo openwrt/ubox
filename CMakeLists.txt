@@ -23,13 +23,6 @@ INSTALL(TARGETS kmodloader
 	RUNTIME DESTINATION sbin
 )
 
-ADD_EXECUTABLE(board board.c)
-TARGET_LINK_LIBRARIES(board ubox ${json} blobmsg_json)
-
-INSTALL(TARGETS board
-	RUNTIME DESTINATION sbin
-)
-
 ADD_EXECUTABLE(lsbloader lsbloader.c)
 TARGET_LINK_LIBRARIES(lsbloader ubox ubus)
 
