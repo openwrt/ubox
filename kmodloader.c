@@ -36,7 +36,7 @@
 #include <libubox/avl-cmp.h>
 #include <libubox/utils.h>
 
-#define DEF_MOD_PATH "/lib/modules/%s/"
+#define DEF_MOD_PATH "/modules/%s/"
 
 #define INFO(fmt, ...) do { \
 	syslog(LOG_INFO, fmt, ## __VA_ARGS__); \
@@ -71,7 +71,51 @@ struct module {
 };
 
 static struct avl_tree modules;
-static char *prefix = "";
+
+static char **module_folders = NULL;
+
+static int init_module_folders(void)
+{
+	int n = 0;
+	struct stat st;
+	struct utsname ver;
+	char *s, *e, *p, path[256], ldpath[256];
+
+	e = ldpath;
+	s = getenv("LD_LIBRARY_PATH");
+
+	if (s)
+		e += snprintf(ldpath, sizeof(ldpath), "%s:", s);
+
+	e += snprintf(e, sizeof(ldpath) - (e - ldpath), "/lib");
+
+	uname(&ver);
+
+	for (s = p = ldpath; p <= e; p++) {
+		if (*p != ':' && *p != '\0')
+			continue;
+
+		*p = 0;
+		snprintf(path, sizeof(path), "%s" DEF_MOD_PATH, s, ver.release);
+
+		if (!stat(path, &st) && S_ISDIR(st.st_mode)) {
+			module_folders = realloc(module_folders, sizeof(p) * (n + 2));
+
+			if (!module_folders)
+				return -1;
+
+			module_folders[n++] = strdup(path);
+		}
+
+		s = p + 1;
+	}
+
+	if (!module_folders)
+		return -1;
+
+	module_folders[n] = NULL;
+	return 0;
+}
 
 static struct module *find_module(const char *name)
 {
@@ -89,18 +133,18 @@ static void free_modules(void)
 
 static char* get_module_path(char *name)
 {
+	char **p;
 	static char path[256];
-	struct utsname ver;
 	struct stat s;
 
-	if (!stat(name, &s))
+	if (!stat(name, &s) && S_ISREG(s.st_mode))
 		return name;
 
-	uname(&ver);
-	snprintf(path, 256, "%s" DEF_MOD_PATH "%s.ko", prefix, ver.release, name);
-
-	if (!stat(path, &s))
-		return path;
+	for (p = module_folders; *p; p++) {
+		snprintf(path, sizeof(path), "%s%s.ko", *p, name);
+		if (!stat(path, &s) && S_ISREG(s.st_mode))
+			return path;
+	}
 
 	return NULL;
 }
@@ -296,7 +340,7 @@ static struct module* get_module_info(const char *module, const char *name)
 	return m;
 }
 
-static int scan_module_folder(void)
+static int scan_module_folder(const char *dir)
 {
 	int gl_flags = GLOB_NOESCAPE | GLOB_MARK;
 	struct utsname ver;
@@ -305,8 +349,8 @@ static int scan_module_folder(void)
 	int j;
 
 	uname(&ver);
-	path = alloca(sizeof(DEF_MOD_PATH "*.ko") + strlen(prefix) + strlen(ver.release) + 1);
-	sprintf(path, "%s" DEF_MOD_PATH "*.ko", prefix, ver.release);
+	path = alloca(strlen(dir) + sizeof("*.ko") + 1);
+	sprintf(path, "%s*.ko", dir);
 
 	if (glob(path, gl_flags, NULL, &gl) < 0)
 		return -1;
@@ -326,6 +370,20 @@ static int scan_module_folder(void)
 	globfree(&gl);
 
 	return 0;
+}
+
+static int scan_module_folders(void)
+{
+	int rv = 0;
+	char **p;
+
+	if (init_module_folders())
+		return -1;
+
+	for (p = module_folders; *p; p++)
+		rv |= scan_module_folder(*p);
+
+	return rv;
 }
 
 static int print_modinfo(char *module)
@@ -617,7 +675,7 @@ static int main_modinfo(int argc, char **argv)
 	if (argc != 2)
 		return print_usage("modinfo");
 
-	if (scan_module_folder())
+	if (scan_module_folders())
 		return -1;
 
 	name = get_module_name(argv[1]);
@@ -649,7 +707,7 @@ static int main_modprobe(int argc, char **argv)
 	if (scan_loaded_modules())
 		return -1;
 
-	if (scan_module_folder())
+	if (scan_module_folders())
 		return -1;
 
 	name = get_module_name(argv[1]);
@@ -693,9 +751,6 @@ static int main_loader(int argc, char **argv)
 	if (argc > 1)
 		dir = argv[1];
 
-	if (argc > 2)
-		prefix = argv[2];
-
 	path = malloc(strlen(dir) + 2);
 	strcpy(path, dir);
 	strcat(path, "*");
@@ -703,7 +758,7 @@ static int main_loader(int argc, char **argv)
 	if (scan_loaded_modules())
 		return -1;
 
-	if (scan_module_folder())
+	if (scan_module_folders())
 		return -1;
 
 	syslog(0, "kmodloader: loading kernel modules from %s\n", path);
