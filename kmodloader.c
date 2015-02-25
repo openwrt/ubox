@@ -35,21 +35,9 @@
 #include <libubox/avl.h>
 #include <libubox/avl-cmp.h>
 #include <libubox/utils.h>
+#include <libubox/ulog.h>
 
 #define DEF_MOD_PATH "/modules/%s/"
-
-#define INFO(fmt, ...) do { \
-	syslog(LOG_INFO, fmt, ## __VA_ARGS__); \
-	printf("kmod: "fmt, ## __VA_ARGS__); \
-	} while (0)
-#define ERROR(fmt, ...) do { \
-	syslog(LOG_ERR, fmt, ## __VA_ARGS__); \
-	fprintf(stderr,"kmod: "fmt, ## __VA_ARGS__); \
-	} while (0)
-#define DEBUG(fmt, ...) do { \
-	syslog(LOG_DEBUG, fmt, ## __VA_ARGS__); \
-	} while (0)
-
 
 enum {
 	SCANNED,
@@ -216,7 +204,7 @@ static int elf_find_section(char *map, const char *section, unsigned int *offset
 	else if (clazz == ELFCLASS64)
 		return elf64_find_section(map, section, offset, size);
 
-	ERROR("unknown elf format %d\n", clazz);
+	ULOG_ERR("unknown elf format %d\n", clazz);
 
 	return -1;
 }
@@ -259,7 +247,7 @@ static int scan_loaded_modules(void)
 
 	fp = fopen("/proc/modules", "r");
 	if (!fp) {
-		ERROR("failed to open /proc/modules\n");
+		ULOG_ERR("failed to open /proc/modules\n");
 		return -1;
 	}
 
@@ -294,23 +282,23 @@ static struct module* get_module_info(const char *module, const char *name)
 	struct stat s;
 
 	if (!fd) {
-		ERROR("failed to open %s\n", module);
+		ULOG_ERR("failed to open %s\n", module);
 		return NULL;
 	}
 
 	if (fstat(fd, &s) == -1) {
-		ERROR("failed to stat %s\n", module);
+		ULOG_ERR("failed to stat %s\n", module);
 		return NULL;
 	}
 
 	map = mmap(NULL, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (map == MAP_FAILED) {
-		ERROR("failed to mmap %s\n", module);
+		ULOG_ERR("failed to mmap %s\n", module);
 		return NULL;
 	}
 
 	if (elf_find_section(map, ".modinfo", &offset, &size)) {
-		ERROR("failed to load the .modinfo section from %s\n", module);
+		ULOG_ERR("failed to load the .modinfo section from %s\n", module);
 		return NULL;
 	}
 
@@ -394,23 +382,23 @@ static int print_modinfo(char *module)
 	char *map, *strings;
 
 	if (!fd) {
-		ERROR("failed to open %s\n", module);
+		ULOG_ERR("failed to open %s\n", module);
 		return -1;
 	}
 
 	if (fstat(fd, &s) == -1) {
-		ERROR("failed to stat %s\n", module);
+		ULOG_ERR("failed to stat %s\n", module);
 		return -1;
 	}
 
 	map = mmap(NULL, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (map == MAP_FAILED) {
-		ERROR("failed to mmap %s\n", module);
+		ULOG_ERR("failed to mmap %s\n", module);
 		return -1;
 	}
 
 	if (elf_find_section(map, ".modinfo", &offset, &size)) {
-		ERROR("failed to load the .modinfo section from %s\n", module);
+		ULOG_ERR("failed to load the .modinfo section from %s\n", module);
 		return -1;
 	}
 
@@ -455,9 +443,9 @@ static int deps_available(struct module *m, int verbose)
 		m = find_module(dep);
 
 		if (verbose && !m)
-			ERROR("missing dependency %s\n", dep);
+			ULOG_ERR("missing dependency %s\n", dep);
 		if (verbose && m && (m->state != LOADED))
-			ERROR("dependency not loaded %s\n", dep);
+			ULOG_ERR("dependency not loaded %s\n", dep);
 		if (!m || (m->state != LOADED))
 			err++;
 		dep += strlen(dep) + 1;
@@ -473,13 +461,13 @@ static int insert_module(char *path, const char *options)
 	int fd, ret = -1;
 
 	if (stat(path, &s)) {
-		ERROR("missing module %s\n", path);
+		ULOG_ERR("missing module %s\n", path);
 		return ret;
 	}
 
 	fd = open(path, O_RDONLY);
 	if (!fd) {
-		ERROR("cannot open %s\n", path);
+		ULOG_ERR("cannot open %s\n", path);
 		return ret;
 	}
 
@@ -487,7 +475,7 @@ static int insert_module(char *path, const char *options)
 	if (read(fd, data, s.st_size) == s.st_size)
 		ret = syscall(__NR_init_module, data, (unsigned long) s.st_size, options);
 	else
-		ERROR("failed to read full module %s\n", path);
+		ULOG_ERR("failed to read full module %s\n", path);
 
 	close(fd);
 	free(data);
@@ -509,7 +497,7 @@ static void load_moddeps(struct module *_m)
 		m = find_module(dep);
 
 		if (!m)
-			ERROR("failed to find dependency %s\n", dep);
+			ULOG_ERR("failed to find dependency %s\n", dep);
 		if (m && (m->state != LOADED)) {
 			m->state = PROBE;
 			load_moddeps(m);
@@ -554,14 +542,14 @@ static int load_modprobe(void)
 
 static int print_insmod_usage(void)
 {
-	INFO("Usage:\n\tinsmod filename [args]\n");
+	ULOG_INFO("Usage:\n\tinsmod filename [args]\n");
 
 	return -1;
 }
 
 static int print_usage(char *arg)
 {
-	INFO("Usage:\n\t%s module\n", arg);
+	ULOG_INFO("Usage:\n\t%s module\n", arg);
 
 	return -1;
 }
@@ -576,7 +564,7 @@ static int main_insmod(int argc, char **argv)
 
 	name = get_module_name(argv[1]);
 	if (!name) {
-		ERROR("cannot find module - %s\n", argv[1]);
+		ULOG_ERR("cannot find module - %s\n", argv[1]);
 		return -1;
 	}
 
@@ -584,7 +572,7 @@ static int main_insmod(int argc, char **argv)
 		return -1;
 
 	if (find_module(name)) {
-		ERROR("module is already loaded - %s\n", name);
+		ULOG_ERR("module is already loaded - %s\n", name);
 		return -1;
 
 	}
@@ -616,7 +604,7 @@ static int main_insmod(int argc, char **argv)
 	free(options);
 
 	if (ret)
-		ERROR("failed to insert %s\n", get_module_path(name));
+		ULOG_ERR("failed to insert %s\n", get_module_path(name));
 
 	return ret;
 }
@@ -636,13 +624,13 @@ static int main_rmmod(int argc, char **argv)
 	name = get_module_name(argv[1]);
 	m = find_module(name);
 	if (!m) {
-		ERROR("module is not loaded\n");
+		ULOG_ERR("module is not loaded\n");
 		return -1;
 	}
 	ret = syscall(__NR_delete_module, m->name, 0);
 
 	if (ret)
-		ERROR("unloading the module failed\n");
+		ULOG_ERR("unloading the module failed\n");
 
 	free_modules();
 
@@ -681,13 +669,13 @@ static int main_modinfo(int argc, char **argv)
 	name = get_module_name(argv[1]);
 	m = find_module(name);
 	if (!m) {
-		ERROR("cannot find module - %s\n", argv[1]);
+		ULOG_ERR("cannot find module - %s\n", argv[1]);
 		return -1;
 	}
 
 	name = get_module_path(m->name);
 	if (!name) {
-		ERROR("cannot find path of module - %s\n", m->name);
+		ULOG_ERR("cannot find path of module - %s\n", m->name);
 		return -1;
 	}
 
@@ -713,10 +701,10 @@ static int main_modprobe(int argc, char **argv)
 	name = get_module_name(argv[1]);
 	m = find_module(name);
 	if (m && m->state == LOADED) {
-		ERROR("%s is already loaded\n", name);
+		ULOG_ERR("%s is already loaded\n", name);
 		return -1;
 	} else if (!m) {
-		ERROR("failed to find a module named %s\n", name);
+		ULOG_ERR("failed to find a module named %s\n", name);
 	} else {
 		int fail;
 
@@ -725,12 +713,12 @@ static int main_modprobe(int argc, char **argv)
 		fail = load_modprobe();
 
 		if (fail) {
-			ERROR("%d module%s could not be probed\n",
-					fail, (fail == 1) ? ("") : ("s"));
+			ULOG_ERR("%d module%s could not be probed\n",
+			         fail, (fail == 1) ? ("") : ("s"));
 
 			avl_for_each_element(&modules, m, avl)
 				if ((m->state == PROBE) || m->error)
-					ERROR("- %s\n", m->name);
+					ULOG_ERR("- %s\n", m->name);
 		}
 	}
 
@@ -772,7 +760,7 @@ static int main_loader(int argc, char **argv)
 		char *mod = NULL;
 
 		if (!fp) {
-			ERROR("failed to open %s\n", gl.gl_pathv[j]);
+			ULOG_ERR("failed to open %s\n", gl.gl_pathv[j]);
 			continue;
 		}
 
@@ -804,15 +792,14 @@ static int main_loader(int argc, char **argv)
 	}
 
 	fail = load_modprobe();
-	DEBUG("ran %d iterations\n", iterations);
 
 	if (fail) {
-		ERROR("%d module%s could not be probed\n",
-				fail, (fail == 1) ? ("") : ("s"));
+		ULOG_ERR("%d module%s could not be probed\n",
+		         fail, (fail == 1) ? ("") : ("s"));
 
 		avl_for_each_element(&modules, m, avl)
 			if ((m->state == PROBE) || (m->error))
-				ERROR("- %s - %d\n", m->name, deps_available(m, 1));
+				ULOG_ERR("- %s - %d\n", m->name, deps_available(m, 1));
 	}
 
 out:
