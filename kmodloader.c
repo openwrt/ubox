@@ -593,6 +593,8 @@ static int main_insmod(int argc, char **argv)
 		cur += sprintf(cur, "%s", argv[i]);
 	}
 
+	init_module_folders();
+
 	if (get_module_path(argv[1])) {
 		name = argv[1];
 	} else if (!get_module_path(name)) {
