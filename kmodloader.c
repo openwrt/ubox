@@ -751,7 +751,7 @@ static int main_loader(int argc, char **argv)
 	if (scan_module_folders())
 		return -1;
 
-	syslog(0, "kmodloader: loading kernel modules from %s\n", path);
+	syslog(LOG_INFO, "kmodloader: loading kernel modules from %s\n", path);
 
 	if (glob(path, gl_flags, NULL, &gl) < 0)
 		goto out;
