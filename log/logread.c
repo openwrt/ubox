@@ -102,6 +102,7 @@ static int log_notify(struct blob_attr *msg)
 	char *str;
 	time_t t;
 	char *c, *m;
+	int ret = 0;
 
 	if (sender.fd < 0)
 		return 0;
@@ -138,16 +139,16 @@ static int log_notify(struct blob_attr *msg)
 		snprintf(buf, sizeof(buf), "<%u>", p);
 		strncat(buf, c + 4, 16);
 		if (hostname) {
-			strncat(buf, hostname, sizeof(buf));
-			strncat(buf, " ", sizeof(buf));
+			strncat(buf, hostname, sizeof(buf) - strlen(buf) - 1);
+			strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
 		}
 		if (log_prefix) {
-			strncat(buf, log_prefix, sizeof(buf));
-			strncat(buf, ": ", sizeof(buf));
+			strncat(buf, log_prefix, sizeof(buf) - strlen(buf) - 1);
+			strncat(buf, ": ", sizeof(buf) - strlen(buf) - 1);
 		}
 		if (blobmsg_get_u32(tb[LOG_SOURCE]) == SOURCE_KLOG)
-			strncat(buf, "kernel: ", sizeof(buf));
-		strncat(buf, m, sizeof(buf));
+			strncat(buf, "kernel: ", sizeof(buf) - strlen(buf) - 1);
+		strncat(buf, m, sizeof(buf) - strlen(buf) - 1);
 		if (log_udp)
 			err = write(sender.fd, buf, strlen(buf));
 		else
@@ -165,14 +166,14 @@ static int log_notify(struct blob_attr *msg)
 		snprintf(buf, sizeof(buf), "%s %s.%s%s %s\n",
 			c, getcodetext(LOG_FAC(p) << 3, facilitynames), getcodetext(LOG_PRI(p), prioritynames),
 			(blobmsg_get_u32(tb[LOG_SOURCE])) ? ("") : (" kernel:"), m);
-		write(sender.fd, buf, strlen(buf));
+		ret = write(sender.fd, buf, strlen(buf));
 	}
 
 	free(str);
 	if (log_type == LOG_FILE)
 		fsync(sender.fd);
 
-	return 0;
+	return ret;
 }
 
 static int usage(const char *prog)
