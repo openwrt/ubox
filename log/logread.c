@@ -59,7 +59,7 @@ static struct uloop_timeout retry;
 static struct uloop_fd sender;
 static const char *log_file, *log_ip, *log_port, *log_prefix, *pid_file, *hostname;
 static int log_type = LOG_STDOUT;
-static int log_size, log_udp, log_follow = 0;
+static int log_size, log_udp, log_follow, log_trailer_null = 0;
 
 static const char* getcodetext(int value, CODE *codetable) {
 	CODE *i;
@@ -151,8 +151,12 @@ static int log_notify(struct blob_attr *msg)
 		strncat(buf, m, sizeof(buf) - strlen(buf) - 1);
 		if (log_udp)
 			err = write(sender.fd, buf, strlen(buf));
-		else
-			err = send(sender.fd, buf, strlen(buf), 0);
+		else {
+			size_t buflen = strlen(buf);
+			if (!log_trailer_null)
+				buf[buflen] = '\n';
+			err = send(sender.fd, buf, buflen + 1, 0);
+		}
 
 		if (err < 0) {
 			syslog(LOG_INFO, "failed to send log data to %s:%s via %s\n",
@@ -190,6 +194,7 @@ static int usage(const char *prog)
 		"    -P	<prefix>	Prefix custom text to streamed messages\n"
 		"    -f			Follow log messages\n"
 		"    -u			Use UDP as the protocol\n"
+		"    -0			Use \\0 instead of \\n as trailer when using TCP\n"
 		"\n", prog);
 	return 1;
 }
@@ -234,10 +239,13 @@ int main(int argc, char **argv)
 
 	signal(SIGPIPE, SIG_IGN);
 
-	while ((ch = getopt(argc, argv, "ufcs:l:r:F:p:S:P:h:")) != -1) {
+	while ((ch = getopt(argc, argv, "u0fcs:l:r:F:p:S:P:h:")) != -1) {
 		switch (ch) {
 		case 'u':
 			log_udp = 1;
+			break;
+		case '0':
+			log_trailer_null = 1;
 			break;
 		case 's':
 			ubus_socket = optarg;
