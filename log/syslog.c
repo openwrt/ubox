@@ -299,4 +299,5 @@ log_shutdown(void)
 	ustream_free(&klog.stream);
 	close(slog.fd.fd);
 	close(klog.fd.fd);
+	free(log);
 }

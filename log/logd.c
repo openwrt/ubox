@@ -70,6 +70,7 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 	struct log_head *l;
 	int count = 0;
 	int fds[2];
+	int ret;
 
 	if (msg) {
 		blobmsg_parse(&read_policy, 1, &tb, blob_data(msg), blob_len(msg));
@@ -96,7 +97,9 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 		blobmsg_add_u32(&b, "source", l->source);
 		blobmsg_add_u64(&b, "time", l->ts.tv_sec * 1000LL);
 		l = log_list(count, l);
-		if (ustream_write(&cl->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false) <= 0)
+		ret = ustream_write(&cl->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false);
+		blob_buf_free(&b);
+		if (ret < 0)
 			break;
 	}
 	return 0;
