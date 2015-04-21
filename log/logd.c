@@ -147,15 +147,17 @@ ubus_notify_log(struct log_head *l)
 	if (list_empty(&clients))
 		return;
 
-	list_for_each_entry(c, &clients, list) {
-		blob_buf_init(&b, 0);
-		blobmsg_add_string(&b, "msg", l->data);
-		blobmsg_add_u32(&b, "id", l->id);
-		blobmsg_add_u32(&b, "priority", l->priority);
-		blobmsg_add_u32(&b, "source", l->source);
-		blobmsg_add_u64(&b, "time", (((__u64) l->ts.tv_sec) * 1000) + (l->ts.tv_nsec / 1000000));
+	blob_buf_init(&b, 0);
+	blobmsg_add_string(&b, "msg", l->data);
+	blobmsg_add_u32(&b, "id", l->id);
+	blobmsg_add_u32(&b, "priority", l->priority);
+	blobmsg_add_u32(&b, "source", l->source);
+	blobmsg_add_u64(&b, "time", (((__u64) l->ts.tv_sec) * 1000) + (l->ts.tv_nsec / 1000000));
+
+	list_for_each_entry(c, &clients, list)
 		ustream_write(&c->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false);
-	}
+
+	blob_buf_free(&b);
 }
 
 static void
