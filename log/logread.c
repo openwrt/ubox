@@ -223,10 +223,6 @@ static void logread_fd_cb(struct ubus_request *req, int fd)
 	ustream_fd_init(&test_fd, fd);
 }
 
-static void logread_complete_cb(struct ubus_request *req, int ret)
-{
-}
-
 int main(int argc, char **argv)
 {
 	static struct ubus_request req;
@@ -334,7 +330,6 @@ int main(int argc, char **argv)
 
 		ubus_invoke_async(ctx, id, "read", b.head, &req);
 		req.fd_cb = logread_fd_cb;
-		req.complete_cb = logread_complete_cb;
 		ubus_complete_request_async(ctx, &req);
 
 		uloop_run();

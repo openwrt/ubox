@@ -55,11 +55,6 @@ client_close(struct ustream *s)
 	free(cl);
 }
 
-static void
-client_notify_write(struct ustream *s, int bytes)
-{
-}
-
 static void client_notify_state(struct ustream *s)
 {
 	client_close(s);
@@ -88,7 +83,6 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 	}
 	ubus_request_set_fd(ctx, req, fds[0]);
 	cl = calloc(1, sizeof(*cl));
-	cl->s.stream.notify_write = client_notify_write;
 	cl->s.stream.notify_state = client_notify_state;
 	cl->fd = fds[1];
 	ustream_fd_init(&cl->s, cl->fd);
