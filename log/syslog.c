@@ -203,7 +203,7 @@ syslog_open(void)
 	int fd;
 
 	unlink(log_dev);
-	fd = usock(USOCK_UNIX | USOCK_UDP |  USOCK_SERVER | USOCK_NONBLOCK, log_dev, NULL);
+	fd = usock(USOCK_UNIX | USOCK_UDP | USOCK_SERVER | USOCK_NONBLOCK, log_dev, NULL);
 	if (fd < 0) {
 		fprintf(stderr,"Failed to open %s\n", log_dev);
 		return -1;

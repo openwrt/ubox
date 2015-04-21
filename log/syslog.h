@@ -26,7 +26,7 @@ struct log_head {
 	unsigned int id;
 	int priority;
 	int source;
-        struct timespec ts;
+	struct timespec ts;
 	char data[];
 };
 
