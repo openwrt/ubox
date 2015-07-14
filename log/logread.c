@@ -17,6 +17,7 @@
 
 #include <fcntl.h>
 #include <time.h>
+#include <regex.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -57,7 +58,8 @@ static const struct blobmsg_policy log_policy[] = {
 
 static struct uloop_timeout retry;
 static struct uloop_fd sender;
-static const char *log_file, *log_ip, *log_port, *log_prefix, *pid_file, *hostname;
+static regex_t regexp_preg;
+static const char *log_file, *log_ip, *log_port, *log_prefix, *pid_file, *hostname, *regexp_pattern;
 static int log_type = LOG_STDOUT;
 static int log_size, log_udp, log_follow, log_trailer_null = 0;
 
@@ -128,6 +130,9 @@ static int log_notify(struct blob_attr *msg)
 	}
 
 	m = blobmsg_get_string(tb[LOG_MSG]);
+	if (regexp_pattern &&
+	    regexec(&regexp_preg, m, 0, NULL, 0) == REG_NOMATCH)
+		return 0;
 	t = blobmsg_get_u64(tb[LOG_TIME]) / 1000;
 	c = ctime(&t);
 	p = blobmsg_get_u32(tb[LOG_PRIO]);
@@ -186,6 +191,7 @@ static int usage(const char *prog)
 		"Options:\n"
 		"    -s <path>		Path to ubus socket\n"
 		"    -l	<count>		Got only the last 'count' messages\n"
+		"    -e	<pattern>	Filter messages with a regexp\n"
 		"    -r	<server> <port>	Stream message to a server\n"
 		"    -F	<file>		Log file\n"
 		"    -S	<bytes>		Log size\n"
@@ -235,7 +241,7 @@ int main(int argc, char **argv)
 
 	signal(SIGPIPE, SIG_IGN);
 
-	while ((ch = getopt(argc, argv, "u0fcs:l:r:F:p:S:P:h:")) != -1) {
+	while ((ch = getopt(argc, argv, "u0fcs:l:r:F:p:S:P:h:e:")) != -1) {
 		switch (ch) {
 		case 'u':
 			log_udp = 1;
@@ -273,6 +279,11 @@ int main(int argc, char **argv)
 			break;
 		case 'h':
 			hostname = optarg;
+			break;
+		case 'e':
+			if (!regcomp(&regexp_preg, optarg, REG_NOSUB)) {
+				regexp_pattern = optarg;
+			}
 			break;
 		default:
 			return usage(*argv);
