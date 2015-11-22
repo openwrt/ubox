@@ -66,7 +66,7 @@ log_add(char *buf, int size, int source)
 
 	/* bounce out if we don't have init'ed yet (regmatch etc will blow) */
 	if (!log) {
-		fprintf(stderr, buf);
+		fprintf(stderr, "%s", buf);
 		return;
 	}
 
