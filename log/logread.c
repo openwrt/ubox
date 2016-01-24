@@ -208,14 +208,19 @@ static int usage(const char *prog)
 static void logread_fd_data_cb(struct ustream *s, int bytes)
 {
 	while (true) {
-		int len;
 		struct blob_attr *a;
+		int len, cur_len;
 
 		a = (void*) ustream_get_read_buf(s, &len);
-		if (len < sizeof(*a) || len < blob_len(a) + sizeof(*a))
+		if (len < sizeof(*a))
 			break;
+
+		cur_len = blob_len(a) + sizeof(*a);
+		if (len < cur_len)
+			break;
+
 		log_notify(a);
-		ustream_consume(s, blob_len(a) + sizeof(*a));
+		ustream_consume(s, cur_len);
 	}
 	if (!log_follow)
 		uloop_end();
