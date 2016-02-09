@@ -277,29 +277,29 @@ static struct module* get_module_info(const char *module, const char *name)
 {
 	int fd = open(module, O_RDONLY);
 	unsigned int offset, size;
-	char *map, *strings, *dep = NULL;
-	struct module *m;
+	char *map = MAP_FAILED, *strings, *dep = NULL;
+	struct module *m = NULL;
 	struct stat s;
 
 	if (fd < 0) {
 		ULOG_ERR("failed to open %s\n", module);
-		return NULL;
+		goto out;
 	}
 
 	if (fstat(fd, &s) == -1) {
 		ULOG_ERR("failed to stat %s\n", module);
-		return NULL;
+		goto out;
 	}
 
 	map = mmap(NULL, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (map == MAP_FAILED) {
 		ULOG_ERR("failed to mmap %s\n", module);
-		return NULL;
+		goto out;
 	}
 
 	if (elf_find_section(map, ".modinfo", &offset, &size)) {
 		ULOG_ERR("failed to load the .modinfo section from %s\n", module);
-		return NULL;
+		goto out;
 	}
 
 	strings = map + offset;
@@ -320,10 +320,16 @@ static struct module* get_module_info(const char *module, const char *name)
 	}
 
 	m = alloc_module(name, dep, s.st_size);
-	if (!m)
-		return NULL;
 
-	m->state = SCANNED;
+	if (m)
+		m->state = SCANNED;
+
+out:
+	if (map != MAP_FAILED)
+		munmap(map, s.st_size);
+
+	if (fd >= 0)
+		close(fd);
 
 	return m;
 }
@@ -379,27 +385,28 @@ static int print_modinfo(char *module)
 	int fd = open(module, O_RDONLY);
 	unsigned int offset, size;
 	struct stat s;
-	char *map, *strings;
+	char *map = MAP_FAILED, *strings;
+	int rv = -1;
 
 	if (fd < 0) {
 		ULOG_ERR("failed to open %s\n", module);
-		return -1;
+		goto out;
 	}
 
 	if (fstat(fd, &s) == -1) {
 		ULOG_ERR("failed to stat %s\n", module);
-		return -1;
+		goto out;
 	}
 
 	map = mmap(NULL, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (map == MAP_FAILED) {
 		ULOG_ERR("failed to mmap %s\n", module);
-		return -1;
+		goto out;
 	}
 
 	if (elf_find_section(map, ".modinfo", &offset, &size)) {
 		ULOG_ERR("failed to load the .modinfo section from %s\n", module);
-		return -1;
+		goto out;
 	}
 
 	strings = map + offset;
@@ -426,7 +433,16 @@ static int print_modinfo(char *module)
 			free(dup);
 	}
 
-	return 0;
+	rv = 0;
+
+out:
+	if (map != MAP_FAILED)
+		munmap(map, s.st_size);
+
+	if (fd >= 0)
+		close(fd);
+
+	return rv;
 }
 
 static int deps_available(struct module *m, int verbose)
