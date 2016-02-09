@@ -281,7 +281,7 @@ static struct module* get_module_info(const char *module, const char *name)
 	struct module *m;
 	struct stat s;
 
-	if (!fd) {
+	if (fd < 0) {
 		ULOG_ERR("failed to open %s\n", module);
 		return NULL;
 	}
@@ -381,7 +381,7 @@ static int print_modinfo(char *module)
 	struct stat s;
 	char *map, *strings;
 
-	if (!fd) {
+	if (fd < 0) {
 		ULOG_ERR("failed to open %s\n", module);
 		return -1;
 	}
@@ -466,7 +466,7 @@ static int insert_module(char *path, const char *options)
 	}
 
 	fd = open(path, O_RDONLY);
-	if (!fd) {
+	if (fd < 0) {
 		ULOG_ERR("cannot open %s\n", path);
 		return ret;
 	}
