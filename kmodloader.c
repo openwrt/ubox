@@ -450,7 +450,7 @@ static int deps_available(struct module *m, int verbose)
 	char *dep;
 	int err = 0;
 
-	if (!strcmp(m->depends, "-") || !strcmp(m->depends, ""))
+	if (!m->depends || !strcmp(m->depends, "-") || !strcmp(m->depends, ""))
 		return 0;
 
 	dep = m->depends;
