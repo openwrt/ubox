@@ -16,6 +16,11 @@ IF(DEBUG)
   ADD_DEFINITIONS(-DDEBUG -g3)
 ENDIF()
 
+ADD_EXECUTABLE(getrandom getrandom.c)
+INSTALL(TARGETS getrandom
+	RUNTIME DESTINATION bin
+)
+
 ADD_EXECUTABLE(kmodloader kmodloader.c)
 TARGET_LINK_LIBRARIES(kmodloader ubox)
 
