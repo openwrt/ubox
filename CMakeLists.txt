@@ -40,6 +40,9 @@ INSTALL(TARGETS validate
 	LIBRARY DESTINATION lib
 )
 
+FIND_PATH(uci_include_dir uci.h)
+INCLUDE_DIRECTORIES(${uci_include_dir})
+
 ADD_EXECUTABLE(validate_data validate/cli.c)
 TARGET_LINK_LIBRARIES(validate_data ubox uci validate)
 INSTALL(TARGETS validate_data
