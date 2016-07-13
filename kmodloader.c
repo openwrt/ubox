@@ -658,15 +658,26 @@ static int main_rmmod(int argc, char **argv)
 static int main_lsmod(int argc, char **argv)
 {
 	struct module *m;
+	char *dep;
 
 	if (scan_loaded_modules())
 		return -1;
 
 	avl_for_each_element(&modules, m, avl)
-		if (m->state == LOADED)
-			printf("%-20s%8d%3d %s\n",
-				m->name, m->size, m->usage,
-				(*m->depends == '-') ? ("") : (m->depends));
+		if (m->state == LOADED) {
+			printf("%-20s%8d%3d ",
+				m->name, m->size, m->usage);
+			if (m->depends && strcmp(m->depends, "-") && strcmp(m->depends, "")) {
+				dep = m->depends;
+				while (*dep) {
+					printf("%s", dep);
+					dep = dep + strlen(dep) + 1;
+					if (*dep)
+						printf(",");
+				}
+			}
+			printf("\n");
+		}
 
 	free_modules();
 
