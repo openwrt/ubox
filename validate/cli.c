@@ -109,39 +109,28 @@ static int
 validate_value(struct uci_ptr *ptr, const char *expr, const char *def)
 {
 	int i = 0;
-	bool empty = true, first = true;
+	bool empty = true;
 	enum dt_type type = DT_INVALID;
 	struct uci_element *e;
-	struct uci_option *opt = ptr->o;
+	struct uci_option *opt = NULL;
 
-	if (opt->type == UCI_TYPE_LIST)
+	if ((ptr->flags & UCI_LOOKUP_COMPLETE) &&
+	    (ptr->last->type == UCI_TYPE_OPTION))
+		opt = ptr->o;
+
+	if (opt && opt->type == UCI_TYPE_LIST)
 	{
 		uci_foreach_element(&opt->v.list, e)
 		{
 			if (!e->name || !*e->name)
 				continue;
 
-			empty = false;
-			break;
-		}
-
-		if (empty)
-		{
-			export_value(DT_STRING, ptr->option, def);
-			return 0;
-		}
-
-		uci_foreach_element(&opt->v.list, e)
-		{
-			if (!e->name || !*e->name)
-				continue;
-
-			if (first)
+			if (empty)
 				printf("%s=", ptr->option);
 			else
 				printf("\\ ");
 
-			first = false;
+			empty = false;
 			type = dt_parse(expr, e->name);
 
 			if (type != DT_INVALID)
@@ -152,16 +141,12 @@ validate_value(struct uci_ptr *ptr, const char *expr, const char *def)
 			        expr, type ? "true" : "false");
 		}
 
-		printf("; ");
+		if (!empty)
+			printf("; ");
 	}
-	else
+	else if (opt && opt->v.string && *opt->v.string)
 	{
-		if (!opt->v.string || !*opt->v.string)
-		{
-			export_value(DT_STRING, ptr->option, def);
-			return 0;
-		}
-
+		empty = false;
 		type = dt_parse(expr, opt->v.string);
 		export_value(type, ptr->option, opt->v.string);
 
@@ -169,6 +154,20 @@ validate_value(struct uci_ptr *ptr, const char *expr, const char *def)
 				ptr->package, ptr->section, ptr->option, opt->v.string,
 		        expr, type ? "true" : "false");
 	}
+
+	if (empty)
+	{
+		type = dt_parse(expr, def);
+
+		if (type == DT_INVALID)
+			type = DT_STRING;
+
+		export_value(type, ptr->option, def);
+
+		fprintf(stderr, "%s.%s.%s is unset and defaults to %s %s\n",
+				ptr->package, ptr->section, ptr->option, expr, def);
+	}
+
 	return type ? 0 : -1;
 }
 
@@ -188,13 +187,7 @@ validate_option(struct uci_context *ctx, char *package, char *section, char *opt
 	ptr.section = section;
 	ptr.option = opt;
 
-	if (uci_lookup_ptr(ctx, &ptr, NULL, false) ||
-	    !(ptr.flags & UCI_LOOKUP_COMPLETE) ||
-	    (ptr.last->type != UCI_TYPE_OPTION))
-	{
-		export_value(DT_STRING, opt, def);
-		return 0;
-	}
+	uci_lookup_ptr(ctx, &ptr, NULL, false);
 
 	return validate_value(&ptr, expr, def);
 }
