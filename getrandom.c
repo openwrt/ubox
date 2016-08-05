@@ -21,38 +21,40 @@
 #include <unistd.h>
 
 #define ERROR_EXIT(fmt, ...) do { \
-        fprintf(stderr, fmt, ## __VA_ARGS__); \
-        return EXIT_FAILURE; \
-        } while (0)
+		fprintf(stderr, fmt, ## __VA_ARGS__); \
+		return EXIT_FAILURE; \
+	} while (0)
 
 static int usage(char *name)
 {
-    fprintf(stderr, "Usage: %s <nb>\n", name);
-    fprintf(stderr, " => return <nb> bytes from getrandom()\n");
-    return EXIT_FAILURE;
+	fprintf(stderr, "Usage: %s <nb>\n", name);
+	fprintf(stderr, " => return <nb> bytes from getrandom()\n");
+	return EXIT_FAILURE;
 }
 
 int main(int argc, char *argv[])
 {
-    if (argc != 2)
-        return usage(argv[0]);
+	if (argc != 2)
+		return usage(argv[0]);
 
-    if (isatty(STDOUT_FILENO))
-        ERROR_EXIT("Not outputting random to a tty\n");
+	if (isatty(STDOUT_FILENO))
+		ERROR_EXIT("Not outputting random to a tty\n");
 
-    int nbtot = atoi(argv[1]);
-    if (nbtot < 1)
-        ERROR_EXIT("Invalid <nb> param (must be > 0)\n");
+	int nbtot = atoi(argv[1]);
+	if (nbtot < 1)
+		ERROR_EXIT("Invalid <nb> param (must be > 0)\n");
 
-    char buf[256];
-    int len = sizeof(buf);
-    while (nbtot > 0) {
-        if (nbtot <= sizeof(buf))
-            len = nbtot;
-        if (syscall(SYS_getrandom, buf, len, 0) == -1)
-            ERROR_EXIT("getrandom() failed: %s\n", strerror(errno));
-        if (write(STDOUT_FILENO, buf, len) != len)
-            ERROR_EXIT("write() failed: %s\n", strerror(errno));
-        nbtot -= sizeof(buf);
-    }
+	char buf[256];
+	int len = sizeof(buf);
+	while (nbtot > 0) {
+		if (nbtot <= sizeof(buf))
+			len = nbtot;
+		if (syscall(SYS_getrandom, buf, len, 0) == -1)
+			ERROR_EXIT("getrandom() failed: %s\n", strerror(errno));
+		if (write(STDOUT_FILENO, buf, len) != len)
+			ERROR_EXIT("write() failed: %s\n", strerror(errno));
+		nbtot -= sizeof(buf);
+	}
+
+	return 0;
 }
