@@ -609,7 +609,10 @@ static int main_insmod(int argc, char **argv)
 		cur += sprintf(cur, "%s", argv[i]);
 	}
 
-	init_module_folders();
+	if (init_module_folders()) {
+		fprintf(stderr, "falied to find the folder holding the modules\n");
+		return -1;
+	}
 
 	if (get_module_path(argv[1])) {
 		name = argv[1];
