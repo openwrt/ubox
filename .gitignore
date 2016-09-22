@@ -7,6 +7,7 @@ libvalidate.so
 logd
 logread
 validate_data
+getrandom
 .*
 Makefile
 CMakeCache.txt
