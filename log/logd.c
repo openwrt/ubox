@@ -92,6 +92,9 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 	int ret;
 	bool stream = true;
 
+	if (!stream)
+		count = 100;
+
 	if (msg) {
 		blobmsg_parse(read_policy, __READ_MAX, tb, blob_data(msg), blob_len(msg));
 		if (tb[READ_LINES])
@@ -99,8 +102,6 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 		if (tb[READ_STREAM])
 			stream = blobmsg_get_bool(tb[READ_STREAM]);
 	}
-	if (!stream)
-		count = 100;
 
 	if (pipe(fds) == -1) {
 		fprintf(stderr, "logd: failed to create pipe: %s\n", strerror(errno));
