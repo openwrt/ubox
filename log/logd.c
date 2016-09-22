@@ -31,8 +31,16 @@ static struct blob_buf b;
 static struct ubus_auto_conn conn;
 static LIST_HEAD(clients);
 
-static const struct blobmsg_policy read_policy =
-	{ .name = "lines", .type = BLOBMSG_TYPE_INT32 };
+enum {
+	READ_LINES,
+	READ_STREAM,
+	__READ_MAX
+};
+
+static const struct blobmsg_policy read_policy[__READ_MAX] = {
+	[READ_LINES] = { .name = "lines", .type = BLOBMSG_TYPE_INT32 },
+	[READ_STREAM] = { .name = "stream", .type = BLOBMSG_TYPE_BOOL },
+};
 
 static const struct blobmsg_policy write_policy =
 	{ .name = "event", .type = BLOBMSG_TYPE_STRING };
@@ -60,48 +68,68 @@ static void client_notify_state(struct ustream *s)
 	client_close(s);
 }
 
+static void
+log_fill_msg(struct blob_buf *b, struct log_head *l)
+{
+	blob_buf_init(b, 0);
+	blobmsg_add_string(b, "msg", l->data);
+	blobmsg_add_u32(b, "id", l->id);
+	blobmsg_add_u32(b, "priority", l->priority);
+	blobmsg_add_u32(b, "source", l->source);
+	blobmsg_add_u64(b, "time", l->ts.tv_sec * 1000LL);
+}
+
 static int
 read_log(struct ubus_context *ctx, struct ubus_object *obj,
 		struct ubus_request_data *req, const char *method,
 		struct blob_attr *msg)
 {
 	struct client *cl;
-	struct blob_attr *tb;
+	struct blob_attr *tb[__READ_MAX];
 	struct log_head *l;
 	int count = 0;
 	int fds[2];
 	int ret;
+	bool stream = true;
 
 	if (msg) {
-		blobmsg_parse(&read_policy, 1, &tb, blob_data(msg), blob_len(msg));
-		if (tb)
-			count = blobmsg_get_u32(tb);
+		blobmsg_parse(read_policy, __READ_MAX, tb, blob_data(msg), blob_len(msg));
+		if (tb[READ_LINES])
+			count = blobmsg_get_u32(tb[READ_LINES]);
+		if (tb[READ_STREAM])
+			stream = blobmsg_get_bool(tb[READ_STREAM]);
 	}
+	if (!stream)
+		count = 100;
 
 	if (pipe(fds) == -1) {
 		fprintf(stderr, "logd: failed to create pipe: %s\n", strerror(errno));
 		return -1;
 	}
-	ubus_request_set_fd(ctx, req, fds[0]);
-	cl = calloc(1, sizeof(*cl));
-	cl->s.stream.notify_state = client_notify_state;
-	cl->fd = fds[1];
-	ustream_fd_init(&cl->s, cl->fd);
-	list_add(&cl->list, &clients);
+
 	l = log_list(count, NULL);
-	while ((!tb || count) && l) {
-		blob_buf_init(&b, 0);
-		blobmsg_add_string(&b, "msg", l->data);
-		blobmsg_add_u32(&b, "id", l->id);
-		blobmsg_add_u32(&b, "priority", l->priority);
-		blobmsg_add_u32(&b, "source", l->source);
-		blobmsg_add_u64(&b, "time", l->ts.tv_sec * 1000LL);
-		l = log_list(count, l);
-		ret = ustream_write(&cl->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false);
-		blob_buf_free(&b);
-		if (ret < 0)
-			break;
+	if (stream) {
+		ubus_request_set_fd(ctx, req, fds[0]);
+		cl = calloc(1, sizeof(*cl));
+		cl->s.stream.notify_state = client_notify_state;
+		cl->fd = fds[1];
+		ustream_fd_init(&cl->s, cl->fd);
+		list_add(&cl->list, &clients);
+		while ((!tb[READ_LINES] || count) && l) {
+			log_fill_msg(&b, l);
+			l = log_list(count, l);
+			ret = ustream_write(&cl->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false);
+			if (ret < 0)
+				break;
+		}
+	} else {
+		while ((!tb[READ_LINES] || count) && l) {
+			log_fill_msg(&b, l);
+			ubus_send_reply(ctx, req, b.head);
+			l = log_list(count, l);
+		}
 	}
+	blob_buf_free(&b);
 	return 0;
 }
 
@@ -125,7 +153,7 @@ write_log(struct ubus_context *ctx, struct ubus_object *obj,
 }
 
 static const struct ubus_method log_methods[] = {
-	{ .name = "read", .handler = read_log, .policy = &read_policy, .n_policy = 1 },
+	UBUS_METHOD("read", read_log, read_policy),
 	{ .name = "write", .handler = write_log, .policy = &write_policy, .n_policy = 1 },
 };
 

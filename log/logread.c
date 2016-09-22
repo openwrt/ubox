@@ -313,6 +313,7 @@ int main(int argc, char **argv)
 		}
 
 		blob_buf_init(&b, 0);
+		blobmsg_add_u8(&b, "stream", 1);
 		if (lines)
 			blobmsg_add_u32(&b, "lines", lines);
 		else if (log_follow)
