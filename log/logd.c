@@ -226,6 +226,7 @@ main(int argc, char **argv)
 	uloop_run();
 	log_shutdown();
 	uloop_done();
+	ubus_auto_shutdown(&conn);
 
 	return 0;
 }
