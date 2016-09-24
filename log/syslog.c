@@ -300,4 +300,6 @@ log_shutdown(void)
 	close(slog.fd.fd);
 	close(klog.fd.fd);
 	free(log);
+	regfree(&pat_prio);
+	regfree(&pat_tstamp);
 }
