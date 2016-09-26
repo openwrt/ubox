@@ -71,7 +71,6 @@ static void client_notify_state(struct ustream *s)
 static void
 log_fill_msg(struct blob_buf *b, struct log_head *l)
 {
-	blob_buf_init(b, 0);
 	blobmsg_add_string(b, "msg", l->data);
 	blobmsg_add_u32(b, "id", l->id);
 	blobmsg_add_u32(b, "priority", l->priority);
@@ -91,6 +90,7 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 	int fds[2];
 	int ret;
 	bool stream = true;
+	void *c, *e;
 
 	if (!stream)
 		count = 100;
@@ -117,6 +117,7 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 		ustream_fd_init(&cl->s, cl->fd);
 		list_add(&cl->list, &clients);
 		while ((!tb[READ_LINES] || count) && l) {
+			blob_buf_init(&b, 0);
 			log_fill_msg(&b, l);
 			l = log_list(count, l);
 			ret = ustream_write(&cl->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false);
@@ -124,11 +125,16 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 				break;
 		}
 	} else {
+		blob_buf_init(&b, 0);
+		c = blobmsg_open_array(&b, "log");
 		while ((!tb[READ_LINES] || count) && l) {
+			e = blobmsg_open_table(&b, NULL);
 			log_fill_msg(&b, l);
-			ubus_send_reply(ctx, req, b.head);
+			blobmsg_close_table(&b, e);
 			l = log_list(count, l);
 		}
+		blobmsg_close_array(&b, c);
+		ubus_send_reply(ctx, req, b.head);
 	}
 	blob_buf_free(&b);
 	return 0;
