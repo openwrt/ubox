@@ -610,7 +610,7 @@ static int main_insmod(int argc, char **argv)
 	}
 
 	if (init_module_folders()) {
-		fprintf(stderr, "falied to find the folder holding the modules\n");
+		fprintf(stderr, "Failed to find the folder holding the modules\n");
 		return -1;
 	}
 
