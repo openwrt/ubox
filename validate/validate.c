@@ -200,7 +200,8 @@ dt_type_list(struct dt_state *s, int nargs)
 static bool
 dt_type_min(struct dt_state *s, int nargs)
 {
-	int n, min;
+	int n;
+	int min = 0;
 	char *e;
 
 	if (dt_getint(0, min))
@@ -215,7 +216,8 @@ dt_type_min(struct dt_state *s, int nargs)
 static bool
 dt_type_max(struct dt_state *s, int nargs)
 {
-	int n, max;
+	int n;
+	int max = 0;
 	char *e;
 
 	if (dt_getint(0, max))
@@ -230,7 +232,9 @@ dt_type_max(struct dt_state *s, int nargs)
 static bool
 dt_type_range(struct dt_state *s, int nargs)
 {
-	int n, min, max;
+	int n;
+	int min = 0;
+	int max = 0;
 	char *e;
 
 	if (dt_getint(0, min) && dt_getint(1, max))
@@ -245,7 +249,7 @@ dt_type_range(struct dt_state *s, int nargs)
 static bool
 dt_type_minlen(struct dt_state *s, int nargs)
 {
-	int min;
+	int min = 0;
 
 	if (dt_getint(0, min))
 		return (strlen(s->value) >= min);
@@ -256,7 +260,7 @@ dt_type_minlen(struct dt_state *s, int nargs)
 static bool
 dt_type_maxlen(struct dt_state *s, int nargs)
 {
-	int max;
+	int max = 0;
 
 	if (dt_getint(0, max))
 		return (strlen(s->value) <= max);
@@ -267,7 +271,8 @@ dt_type_maxlen(struct dt_state *s, int nargs)
 static bool
 dt_type_rangelen(struct dt_state *s, int nargs)
 {
-	int min, max;
+	int min = 0;
+	int max = 0;
 	int len = strlen(s->value);
 
 	if (dt_getint(0, min) && dt_getint(1, max))
@@ -346,7 +351,8 @@ dt_type_bool(struct dt_state *s, int nargs)
 static bool
 dt_type_string(struct dt_state *s, int nargs)
 {
-	int min, max;
+	int min = 0;
+	int max = 0;
 	int len = strlen(s->value);
 
 	if (dt_getint(0, min) && (len < min))
@@ -361,7 +367,8 @@ dt_type_string(struct dt_state *s, int nargs)
 static bool
 dt_type_hexstring(struct dt_state *s, int nargs)
 {
-	int min, max;
+	int min = 0;
+	int max = 0;
 	int len = strlen(s->value);
 	const char *p;
 
