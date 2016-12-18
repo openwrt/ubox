@@ -173,8 +173,10 @@ dt_type_list(struct dt_state *s, int nargs)
 	char *p, *str = strdup(s->value);
 	const char *value = s->value;
 
-	if (!str || !nargs)
+	if (!str || !nargs) {
+		free(str);
 		return false;
+	}
 
 	for (p = strtok(str, " \t"); p; p = strtok(NULL, " \t"))
 	{

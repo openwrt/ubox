@@ -775,11 +775,15 @@ static int main_loader(int argc, char **argv)
 	strcpy(path, dir);
 	strcat(path, "*");
 
-	if (scan_loaded_modules())
+	if (scan_loaded_modules()) {
+		free (path);
 		return -1;
+	}
 
-	if (scan_module_folders())
+	if (scan_module_folders()) {
+		free (path);
 		return -1;
+	}
 
 	syslog(LOG_INFO, "kmodloader: loading kernel modules from %s\n", path);
 

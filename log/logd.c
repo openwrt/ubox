@@ -84,7 +84,7 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 		struct blob_attr *msg)
 {
 	struct client *cl;
-	struct blob_attr *tb[__READ_MAX];
+	struct blob_attr *tb[__READ_MAX] = { 0 };
 	struct log_head *l;
 	int count = 0;
 	int fds[2];
