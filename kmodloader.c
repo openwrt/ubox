@@ -45,21 +45,30 @@ enum {
 };
 
 struct module {
-	struct avl_node avl;
-
 	char *name;
 	char *depends;
 	char *opts;
+	char **aliases;
+	int naliases;
 
 	int size;
 	int usage;
 	int state;
 	int error;
+	int refcnt;			/* number of references from module_node.m */
+};
+
+struct module_node {
+	struct avl_node avl;
+	struct module *m;
+	bool is_alias;
 };
 
 static struct avl_tree modules;
 
 static char **module_folders = NULL;
+
+static void free_module(struct module *m);
 
 static int init_module_folders(void)
 {
@@ -106,16 +115,26 @@ static int init_module_folders(void)
 
 static struct module *find_module(const char *name)
 {
-	struct module *m;
-	return avl_find_element(&modules, name, m, avl);
+	struct module_node *mn;
+	mn = avl_find_element(&modules, name, mn, avl);
+	if (mn)
+		return mn->m;
+	else
+		return NULL;
 }
 
 static void free_modules(void)
 {
-	struct module *m, *tmp;
+	struct module_node *mn, *tmp;
 
-	avl_remove_all_elements(&modules, m, avl, tmp)
-		free(m);
+	avl_remove_all_elements(&modules, mn, avl, tmp) {
+		struct module *m = mn->m;
+
+		m->refcnt -= 1;
+		if (m->refcnt == 0)
+			free_module(m);
+		free(mn);
+	}
 }
 
 static char* get_module_path(char *name)
@@ -208,19 +227,43 @@ static int elf_find_section(char *map, const char *section, unsigned int *offset
 	return -1;
 }
 
+static struct module_node *
+alloc_module_node(const char *name, struct module *m, bool is_alias)
+{
+	struct module_node *mn;
+	char *_name;
+
+	mn = calloc_a(sizeof(*mn),
+		&_name, strlen(name) + 1);
+	if (mn) {
+		mn->avl.key = strcpy(_name, name);
+		mn->m = m;
+		mn->is_alias = is_alias;
+		avl_insert(&modules, &mn->avl);
+		m->refcnt += 1;
+	}
+	return mn;
+}
+
 static struct module *
-alloc_module(const char *name, const char *depends, int size)
+alloc_module(const char *name, const char * const *aliases, int naliases, const char *depends, int size)
 {
 	struct module *m;
 	char *_name, *_dep;
+	char **_aliases;
+	int i, len_aliases;
 
+	len_aliases = naliases * sizeof(aliases[0]);
+	for (i = 0; i < naliases; i++)
+		len_aliases += strlen(aliases[i]) + 1;
 	m = calloc_a(sizeof(*m),
 		&_name, strlen(name) + 1,
-		&_dep, depends ? strlen(depends) + 2 : 0);
+		&_dep, depends ? strlen(depends) + 2 : 0,
+		&_aliases, len_aliases);
 	if (!m)
 		return NULL;
 
-	m->avl.key = m->name = strcpy(_name, name);
+	m->name = strcpy(_name, name);
 	m->opts = 0;
 
 	if (depends) {
@@ -231,11 +274,38 @@ alloc_module(const char *name, const char *depends, int size)
 			_dep++;
 		}
 	}
-
 	m->size = size;
-	avl_insert(&modules, &m->avl);
+	m->naliases = naliases;
+	if (naliases == 0)
+		m->aliases = NULL;
+	else {
+		char *ptr = (char *)_aliases + naliases * sizeof(_aliases[0]);
+		int len;
+
+		i = 0;
+		do {
+			len = strlen(aliases[i]) + 1;
+			memcpy(ptr, aliases[i], len);
+			_aliases[i] = ptr;
+			ptr += len;
+			i++;
+		} while (i < naliases);
+		m->aliases = _aliases;
+	}
+
+	m->refcnt = 0;
+	alloc_module_node(m->name, m, false);
+	for (i = 0; i < m->naliases; i++)
+		alloc_module_node(m->aliases[i], m, true);
 
 	return m;
+}
+
+static void free_module(struct module *m)
+{
+	if (m->opts)
+		free(m->opts);
+	free(m);
 }
 
 static int scan_loaded_modules(void)
@@ -262,7 +332,11 @@ static int scan_loaded_modules(void)
 		if (!m.name || !m.depends)
 			continue;
 
-		n = alloc_module(m.name, m.depends, m.size);
+		n = find_module(m.name);
+		if (!n) {
+			/* possibly a module outside /lib/modules/<ver>/ */
+			n = alloc_module(m.name, NULL, 0, m.depends, m.size);
+		}
 		n->usage = m.usage;
 		n->state = LOADED;
 	}
@@ -277,6 +351,8 @@ static struct module* get_module_info(const char *module, const char *name)
 	int fd = open(module, O_RDONLY);
 	unsigned int offset, size;
 	char *map = MAP_FAILED, *strings, *dep = NULL;
+	const char *aliases[32];
+	int naliases = 0;
 	struct module *m = NULL;
 	struct stat s;
 
@@ -317,10 +393,17 @@ static struct module* get_module_info(const char *module, const char *name)
 		sep++;
 		if (!strncmp(strings, "depends=", len + 1))
 			dep = sep;
+		else if (!strncmp(strings, "alias=", len + 1)) {
+			if (naliases < ARRAY_SIZE(aliases))
+				aliases[naliases++] = sep;
+			else
+				ULOG_WARN("module %s has more than %d aliases: truncated",
+						name, ARRAY_SIZE(aliases));
+		}
 		strings = &sep[strlen(sep)];
 	}
 
-	m = alloc_module(name, dep, s.st_size);
+	m = alloc_module(name, aliases, naliases, dep, s.st_size);
 
 	if (m)
 		m->state = SCANNED;
@@ -530,16 +613,24 @@ static int iterations = 0;
 static int load_modprobe(void)
 {
 	int loaded, todo;
+	struct module_node *mn;
 	struct module *m;
 
-	avl_for_each_element(&modules, m, avl)
+	avl_for_each_element(&modules, mn, avl) {
+		if (mn->is_alias)
+			continue;
+		m = mn->m;
 		if (m->state == PROBE)
 			load_moddeps(m);
+	}
 
 	do {
 		loaded = 0;
 		todo = 0;
-		avl_for_each_element(&modules, m, avl) {
+		avl_for_each_element(&modules, mn, avl) {
+			if (mn->is_alias)
+				continue;
+			m = mn->m;
 			if ((m->state == PROBE) && (!deps_available(m, 0))) {
 				if (!insert_module(get_module_path(m->name), (m->opts) ? (m->opts) : (""))) {
 					m->state = LOADED;
@@ -663,13 +754,17 @@ static int main_rmmod(int argc, char **argv)
 
 static int main_lsmod(int argc, char **argv)
 {
+	struct module_node *mn;
 	struct module *m;
 	char *dep;
 
 	if (scan_loaded_modules())
 		return -1;
 
-	avl_for_each_element(&modules, m, avl)
+	avl_for_each_element(&modules, mn, avl) {
+		if (mn->is_alias)
+			continue;
+		m = mn->m;
 		if (m->state == LOADED) {
 			printf("%-20s%8d%3d ",
 				m->name, m->size, m->usage);
@@ -684,6 +779,7 @@ static int main_lsmod(int argc, char **argv)
 			}
 			printf("\n");
 		}
+	}
 
 	free_modules();
 
@@ -721,6 +817,7 @@ static int main_modinfo(int argc, char **argv)
 
 static int main_modprobe(int argc, char **argv)
 {
+	struct module_node *mn;
 	struct module *m;
 	char *name;
 	char *mod = NULL;
@@ -734,10 +831,10 @@ static int main_modprobe(int argc, char **argv)
 	if (!mod)
 		return print_usage("modprobe");
 
-	if (scan_loaded_modules())
+	if (scan_module_folders())
 		return -1;
 
-	if (scan_module_folders())
+	if (scan_loaded_modules())
 		return -1;
 
 	name = get_module_name(mod);
@@ -758,9 +855,13 @@ static int main_modprobe(int argc, char **argv)
 			ULOG_ERR("%d module%s could not be probed\n",
 			         fail, (fail == 1) ? ("") : ("s"));
 
-			avl_for_each_element(&modules, m, avl)
+			avl_for_each_element(&modules, mn, avl) {
+				if (mn->is_alias)
+					continue;
+				m = mn->m;
 				if ((m->state == PROBE) || m->error)
 					ULOG_ERR("- %s\n", m->name);
+			}
 		}
 	}
 
@@ -773,6 +874,7 @@ static int main_loader(int argc, char **argv)
 {
 	int gl_flags = GLOB_NOESCAPE | GLOB_MARK;
 	char *dir = "/etc/modules.d/";
+	struct module_node *mn;
 	struct module *m;
 	glob_t gl;
 	char *path;
@@ -785,12 +887,12 @@ static int main_loader(int argc, char **argv)
 	strcpy(path, dir);
 	strcat(path, "*");
 
-	if (scan_loaded_modules()) {
+	if (scan_module_folders()) {
 		free (path);
 		return -1;
 	}
 
-	if (scan_module_folders()) {
+	if (scan_loaded_modules()) {
 		free (path);
 		return -1;
 	}
@@ -843,9 +945,13 @@ static int main_loader(int argc, char **argv)
 		ULOG_ERR("%d module%s could not be probed\n",
 		         fail, (fail == 1) ? ("") : ("s"));
 
-		avl_for_each_element(&modules, m, avl)
+		avl_for_each_element(&modules, mn, avl) {
+			if (mn->is_alias)
+				continue;
+			m = mn->m;
 			if ((m->state == PROBE) || (m->error))
 				ULOG_ERR("- %s - %d\n", m->name, deps_available(m, 1));
+		}
 	} else {
 		ULOG_INFO("done loading kernel modules from %s\n", path);
 	}
