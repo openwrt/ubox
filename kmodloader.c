@@ -719,8 +719,15 @@ static int main_modprobe(int argc, char **argv)
 {
 	struct module *m;
 	char *name;
+	char *mod = NULL;
+	int i;
 
-	if (argc != 2)
+	for (i = 1; i < argc; i++)
+		if (argv[i][0] != '-') {
+			mod = argv[i];
+			break;
+		}
+	if (!mod)
 		return print_usage("modprobe");
 
 	if (scan_loaded_modules())
@@ -729,7 +736,7 @@ static int main_modprobe(int argc, char **argv)
 	if (scan_module_folders())
 		return -1;
 
-	name = get_module_name(argv[1]);
+	name = get_module_name(mod);
 	m = find_module(name);
 	if (m && m->state == LOADED) {
 		ULOG_ERR("%s is already loaded\n", name);
