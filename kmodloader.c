@@ -302,12 +302,14 @@ static struct module* get_module_info(const char *module, const char *name)
 	}
 
 	strings = map + offset;
-	while (strings && (strings < map + offset + size)) {
+	while (true) {
 		char *sep;
 		int len;
 
 		while (!strings[0])
 			strings++;
+		if (strings >= map + offset + size)
+			break;
 		sep = strstr(strings, "=");
 		if (!sep)
 			break;
@@ -410,12 +412,14 @@ static int print_modinfo(char *module)
 
 	strings = map + offset;
 	printf("module:\t\t%s\n", module);
-	while (strings && (strings < map + offset + size)) {
+	while (true) {
 		char *dup = NULL;
 		char *sep;
 
 		while (!strings[0])
 			strings++;
+		if (strings >= map + offset + size)
+			break;
 		sep = strstr(strings, "=");
 		if (!sep)
 			break;
