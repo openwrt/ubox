@@ -27,7 +27,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <syslog.h>
 #include <libgen.h>
 #include <glob.h>
 #include <elf.h>
@@ -785,7 +784,7 @@ static int main_loader(int argc, char **argv)
 		return -1;
 	}
 
-	syslog(LOG_INFO, "kmodloader: loading kernel modules from %s\n", path);
+	ULOG_INFO("loading kernel modules from %s\n", path);
 
 	if (glob(path, gl_flags, NULL, &gl) < 0)
 		goto out;
@@ -836,6 +835,8 @@ static int main_loader(int argc, char **argv)
 		avl_for_each_element(&modules, m, avl)
 			if ((m->state == PROBE) || (m->error))
 				ULOG_ERR("- %s - %d\n", m->name, deps_available(m, 1));
+	} else {
+		ULOG_INFO("done loading kernel modules from %s\n", path);
 	}
 
 out:
@@ -881,5 +882,6 @@ int main(int argc, char **argv)
 	if (!strcmp(exec, "modprobe"))
 		return main_modprobe(argc, argv);
 
+	ulog_open(ULOG_KMSG, LOG_USER, "kmodloader");
 	return main_loader(argc, argv);
 }
