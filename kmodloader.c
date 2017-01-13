@@ -574,8 +574,11 @@ static int insert_module(char *path, const char *options)
 	}
 
 	data = malloc(s.st_size);
-	if (read(fd, data, s.st_size) == s.st_size)
+	if (read(fd, data, s.st_size) == s.st_size) {
 		ret = syscall(__NR_init_module, data, (unsigned long) s.st_size, options);
+		if (errno == EEXIST)
+			ret = 0;
+	}
 	else
 		ULOG_ERR("failed to read full module %s\n", path);
 
