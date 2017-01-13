@@ -762,7 +762,7 @@ static int main_modprobe(int argc, char **argv)
 static int main_loader(int argc, char **argv)
 {
 	int gl_flags = GLOB_NOESCAPE | GLOB_MARK;
-	char *dir = "/etc/modules.d/*";
+	char *dir = "/etc/modules.d/";
 	struct module *m;
 	glob_t gl;
 	char *path;
