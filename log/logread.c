@@ -62,6 +62,7 @@ static regex_t regexp_preg;
 static const char *log_file, *log_ip, *log_port, *log_prefix, *pid_file, *hostname, *regexp_pattern;
 static int log_type = LOG_STDOUT;
 static int log_size, log_udp, log_follow, log_trailer_null = 0;
+static int log_timestamp;
 
 static const char* getcodetext(int value, CODE *codetable) {
 	CODE *i;
@@ -100,9 +101,11 @@ static int log_notify(struct blob_attr *msg)
 	struct blob_attr *tb[__LOG_MAX];
 	struct stat s;
 	char buf[512];
+	char buf_ts[32];
 	uint32_t p;
 	char *str;
 	time_t t;
+	uint32_t t_ms = 0;
 	char *c, *m;
 	int ret = 0;
 
@@ -134,6 +137,11 @@ static int log_notify(struct blob_attr *msg)
 	    regexec(&regexp_preg, m, 0, NULL, 0) == REG_NOMATCH)
 		return 0;
 	t = blobmsg_get_u64(tb[LOG_TIME]) / 1000;
+	if (log_timestamp) {
+		t_ms = blobmsg_get_u64(tb[LOG_TIME]) % 1000;
+		snprintf(buf_ts, sizeof(buf_ts), "[%lu.%03u] ",
+				(unsigned long)t, t_ms);
+	}
 	c = ctime(&t);
 	p = blobmsg_get_u32(tb[LOG_PRIO]);
 	c[strlen(c) - 1] = '\0';
@@ -143,6 +151,9 @@ static int log_notify(struct blob_attr *msg)
 
 		snprintf(buf, sizeof(buf), "<%u>", p);
 		strncat(buf, c + 4, 16);
+		if (log_timestamp) {
+			strncat(buf, buf_ts, sizeof(buf) - strlen(buf) - 1);
+		}
 		if (hostname) {
 			strncat(buf, hostname, sizeof(buf) - strlen(buf) - 1);
 			strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
@@ -172,8 +183,10 @@ static int log_notify(struct blob_attr *msg)
 			uloop_timeout_set(&retry, 1000);
 		}
 	} else {
-		snprintf(buf, sizeof(buf), "%s %s.%s%s %s\n",
-			c, getcodetext(LOG_FAC(p) << 3, facilitynames), getcodetext(LOG_PRI(p), prioritynames),
+		snprintf(buf, sizeof(buf), "%s %s%s.%s%s %s\n",
+			c, log_timestamp ? buf_ts : "",
+			getcodetext(LOG_FAC(p) << 3, facilitynames),
+			getcodetext(LOG_PRI(p), prioritynames),
 			(blobmsg_get_u32(tb[LOG_SOURCE])) ? ("") : (" kernel:"), m);
 		ret = write(sender.fd, buf, strlen(buf));
 	}
@@ -200,6 +213,7 @@ static int usage(const char *prog)
 		"    -P	<prefix>	Prefix custom text to streamed messages\n"
 		"    -f			Follow log messages\n"
 		"    -u			Use UDP as the protocol\n"
+		"    -t			Add an extra timestamp\n"
 		"    -0			Use \\0 instead of \\n as trailer when using TCP\n"
 		"\n", prog);
 	return 1;
@@ -246,7 +260,7 @@ int main(int argc, char **argv)
 
 	signal(SIGPIPE, SIG_IGN);
 
-	while ((ch = getopt(argc, argv, "u0fcs:l:r:F:p:S:P:h:e:")) != -1) {
+	while ((ch = getopt(argc, argv, "u0fcs:l:r:F:p:S:P:h:e:t")) != -1) {
 		switch (ch) {
 		case 'u':
 			log_udp = 1;
@@ -289,6 +303,9 @@ int main(int argc, char **argv)
 			if (!regcomp(&regexp_preg, optarg, REG_NOSUB)) {
 				regexp_pattern = optarg;
 			}
+			break;
+		case 't':
+			log_timestamp = 1;
 			break;
 		default:
 			return usage(*argv);

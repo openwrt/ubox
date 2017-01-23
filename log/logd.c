@@ -75,7 +75,7 @@ log_fill_msg(struct blob_buf *b, struct log_head *l)
 	blobmsg_add_u32(b, "id", l->id);
 	blobmsg_add_u32(b, "priority", l->priority);
 	blobmsg_add_u32(b, "source", l->source);
-	blobmsg_add_u64(b, "time", l->ts.tv_sec * 1000LL);
+	blobmsg_add_u64(b, "time", (((__u64) l->ts.tv_sec) * 1000) + (l->ts.tv_nsec / 1000000));
 }
 
 static int
