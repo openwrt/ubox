@@ -660,6 +660,13 @@ static int print_insmod_usage(void)
 	return -1;
 }
 
+static int print_modprobe_usage(void)
+{
+	ULOG_INFO("Usage:\n\tmodprobe [-q] filename\n");
+
+	return -1;
+}
+
 static int print_usage(char *arg)
 {
 	ULOG_INFO("Usage:\n\t%s module\n", arg);
@@ -824,15 +831,24 @@ static int main_modprobe(int argc, char **argv)
 	struct module *m;
 	char *name;
 	char *mod = NULL;
-	int i;
+	int opt;
+	bool quiet = false;
 
-	for (i = 1; i < argc; i++)
-		if (argv[i][0] != '-') {
-			mod = argv[i];
-			break;
-		}
-	if (!mod)
-		return print_usage("modprobe");
+	while ((opt = getopt(argc, argv, "q")) != -1 ) {
+		switch (opt) {
+			case 'q': /* shhhh! */
+				quiet = true;
+				break;
+			default: /* '?' */
+				return print_modprobe_usage();
+				break;
+			}
+	}
+
+	if (optind >= argc)
+		return print_modprobe_usage(); /* expected module after options */
+
+	mod = argv[optind];
 
 	if (scan_module_folders())
 		return -1;
@@ -843,10 +859,13 @@ static int main_modprobe(int argc, char **argv)
 	name = get_module_name(mod);
 	m = find_module(name);
 	if (m && m->state == LOADED) {
-		ULOG_ERR("%s is already loaded\n", name);
+		if (!quiet)
+			ULOG_ERR("%s is already loaded\n", name);
 		return -1;
 	} else if (!m) {
-		ULOG_ERR("failed to find a module named %s\n", name);
+		if (!quiet)
+			ULOG_ERR("failed to find a module named %s\n", name);
+		return -1;
 	} else {
 		int fail;
 
