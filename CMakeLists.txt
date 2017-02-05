@@ -16,10 +16,17 @@ IF(DEBUG)
   ADD_DEFINITIONS(-DDEBUG -g3)
 ENDIF()
 
-ADD_EXECUTABLE(getrandom getrandom.c)
-INSTALL(TARGETS getrandom
-	RUNTIME DESTINATION bin
-)
+INCLUDE (CheckSymbolExists)
+CHECK_SYMBOL_EXISTS(SYS_getrandom sycall.h getrandom)
+
+IF(getrandom)
+  ADD_EXECUTABLE(getrandom getrandom.c)
+  INSTALL(TARGETS getrandom
+          RUNTIME DESTINATION bin
+  )
+ELSE()
+  message( FATAL_ERROR "Kernel too old, missing SYS_getrandom system call")
+ENDIF()
 
 ADD_EXECUTABLE(kmodloader kmodloader.c)
 TARGET_LINK_LIBRARIES(kmodloader ubox)
