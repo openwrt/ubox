@@ -985,20 +985,23 @@ out:
 	return 0;
 }
 
+static inline char weight(char c)
+{
+	return c == '_' ? '-' : c;
+}
+
 static int avl_modcmp(const void *k1, const void *k2, void *ptr)
 {
 	const char *s1 = k1;
 	const char *s2 = k2;
 
-	while (*s1 && ((*s1 == *s2) ||
-	               ((*s1 == '_') && (*s2 == '-')) ||
-	               ((*s1 == '-') && (*s2 == '_'))))
+	while (*s1 && (weight(*s1) == weight(*s2)))
 	{
 		s1++;
 		s2++;
 	}
 
-	return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+	return (unsigned char)weight(*s1) - (unsigned char)weight(*s2);
 }
 
 int main(int argc, char **argv)
