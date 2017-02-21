@@ -17,7 +17,7 @@ IF(DEBUG)
 ENDIF()
 
 INCLUDE (CheckSymbolExists)
-CHECK_SYMBOL_EXISTS(SYS_getrandom sycall.h getrandom)
+CHECK_SYMBOL_EXISTS(SYS_getrandom syscall.h getrandom)
 
 IF(getrandom)
   ADD_EXECUTABLE(getrandom getrandom.c)
