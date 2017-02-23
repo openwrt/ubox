@@ -48,8 +48,6 @@ struct module {
 	char *name;
 	char *depends;
 	char *opts;
-	char **aliases;
-	int naliases;
 
 	int size;
 	int usage;
@@ -250,16 +248,11 @@ alloc_module(const char *name, const char * const *aliases, int naliases, const 
 {
 	struct module *m;
 	char *_name, *_dep;
-	char **_aliases;
-	int i, len_aliases;
+	int i;
 
-	len_aliases = naliases * sizeof(aliases[0]);
-	for (i = 0; i < naliases; i++)
-		len_aliases += strlen(aliases[i]) + 1;
 	m = calloc_a(sizeof(*m),
 		&_name, strlen(name) + 1,
-		&_dep, depends ? strlen(depends) + 2 : 0,
-		&_aliases, len_aliases);
+		&_dep, depends ? strlen(depends) + 2 : 0);
 	if (!m)
 		return NULL;
 
@@ -275,28 +268,11 @@ alloc_module(const char *name, const char * const *aliases, int naliases, const 
 		}
 	}
 	m->size = size;
-	m->naliases = naliases;
-	if (naliases == 0)
-		m->aliases = NULL;
-	else {
-		char *ptr = (char *)_aliases + naliases * sizeof(_aliases[0]);
-		int len;
-
-		i = 0;
-		do {
-			len = strlen(aliases[i]) + 1;
-			memcpy(ptr, aliases[i], len);
-			_aliases[i] = ptr;
-			ptr += len;
-			i++;
-		} while (i < naliases);
-		m->aliases = _aliases;
-	}
 
 	m->refcnt = 0;
 	alloc_module_node(m->name, m, false);
-	for (i = 0; i < m->naliases; i++)
-		alloc_module_node(m->aliases[i], m, true);
+	for (i = 0; i < naliases; i++)
+		alloc_module_node(aliases[i], m, true);
 
 	return m;
 }
