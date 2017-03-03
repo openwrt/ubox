@@ -837,7 +837,7 @@ static int main_modprobe(int argc, char **argv)
 	if (m && m->state == LOADED) {
 		if (!quiet)
 			ULOG_ERR("%s is already loaded\n", name);
-		return -1;
+		return 0;
 	} else if (!m) {
 		if (!quiet)
 			ULOG_ERR("failed to find a module named %s\n", name);
