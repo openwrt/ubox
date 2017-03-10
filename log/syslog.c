@@ -51,7 +51,7 @@ static regex_t pat_tstamp;
 static struct log_head*
 log_next(struct log_head *h, int size)
 {
-	struct log_head *n = (struct log_head *) &h->data[PAD(sizeof(struct log_head) + size)];
+	struct log_head *n = (struct log_head *) &h->data[PAD(size)];
 
 	return (n >= log_end) ? (log) : (n);
 }
