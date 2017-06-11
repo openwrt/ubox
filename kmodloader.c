@@ -155,10 +155,10 @@ static char* get_module_path(char *name)
 
 static char* get_module_name(char *path)
 {
-	static char name[32];
+	static char name[33];
 	char *t;
 
-	strncpy(name, basename(path), sizeof(name));
+	strncpy(name, basename(path), sizeof(name) - 1);
 
 	t = strstr(name, ".ko");
 	if (t)
