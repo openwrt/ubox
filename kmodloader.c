@@ -327,7 +327,7 @@ static struct module* get_module_info(const char *module, const char *name)
 	int fd = open(module, O_RDONLY);
 	unsigned int offset, size;
 	char *map = MAP_FAILED, *strings, *dep = NULL;
-	const char *aliases[32];
+	const char *aliases[32] = { 0 };
 	int naliases = 0;
 	struct module *m = NULL;
 	struct stat s;
