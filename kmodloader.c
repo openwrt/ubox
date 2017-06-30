@@ -214,6 +214,19 @@ static int elf32_find_section(char *map, const char *section, unsigned int *offs
 static int elf_find_section(char *map, const char *section, unsigned int *offset, unsigned int *size)
 {
 	int clazz = map[EI_CLASS];
+	int endian = map[EI_DATA];
+
+#if defined(__LITTLE_ENDIAN)
+	if (endian != ELFDATA2LSB)
+#elif defined(__BIG_ENDIAN)
+	if (endian != ELFDATA2MSB)
+#else
+#error "unsupported endian"
+#endif
+	{
+		ULOG_ERR("invalid endianess: %d\n", endian);
+		return -1;
+	}
 
 	if (clazz == ELFCLASS32)
 		return elf32_find_section(map, section, offset, size);
