@@ -216,9 +216,9 @@ static int elf_find_section(char *map, const char *section, unsigned int *offset
 	int clazz = map[EI_CLASS];
 	int endian = map[EI_DATA];
 
-#if defined(__LITTLE_ENDIAN)
+#if __BYTE_ORDER == __LITTLE_ENDIAN
 	if (endian != ELFDATA2LSB)
-#elif defined(__BIG_ENDIAN)
+#elif __BYTE_ORDER == __BIG_ENDIAN
 	if (endian != ELFDATA2MSB)
 #else
 #error "unsupported endian"
