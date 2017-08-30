@@ -563,6 +563,9 @@ static int insert_module(char *path, const char *options)
 	}
 
 	data = malloc(s.st_size);
+	if (!data)
+		goto out;
+
 	if (read(fd, data, s.st_size) == s.st_size) {
 		ret = syscall(__NR_init_module, data, (unsigned long) s.st_size, options);
 		if (errno == EEXIST)
@@ -571,6 +574,7 @@ static int insert_module(char *path, const char *options)
 	else
 		ULOG_ERR("failed to read full module %s\n", path);
 
+out:
 	close(fd);
 	free(data);
 
@@ -692,6 +696,11 @@ static int main_insmod(int argc, char **argv)
 		len += strlen(argv[i]) + 1;
 
 	options = malloc(len);
+	if (!options) {
+		ret = -1;
+		goto err;
+	}
+
 	options[0] = 0;
 	cur = options;
 	for (i = 2; i < argc; i++) {
@@ -897,6 +906,9 @@ static int main_loader(int argc, char **argv)
 		dir = argv[1];
 
 	path = malloc(strlen(dir) + 2);
+	if (!path)
+		return -1;
+
 	strcpy(path, dir);
 	strcat(path, "*");
 
