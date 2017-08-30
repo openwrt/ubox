@@ -340,7 +340,7 @@ static struct module* get_module_info(const char *module, const char *name)
 	int fd = open(module, O_RDONLY);
 	unsigned int offset, size;
 	char *map = MAP_FAILED, *strings, *dep = NULL;
-	const char *aliases[32] = { 0 };
+	const char **aliases = NULL;
 	int naliases = 0;
 	struct module *m = NULL;
 	struct stat s;
@@ -383,11 +383,13 @@ static struct module* get_module_info(const char *module, const char *name)
 		if (!strncmp(strings, "depends=", len + 1))
 			dep = sep;
 		else if (!strncmp(strings, "alias=", len + 1)) {
-			if (naliases < ARRAY_SIZE(aliases))
-				aliases[naliases++] = sep;
-			else
-				ULOG_WARN("module %s has more than %d aliases: truncated",
-						name, ARRAY_SIZE(aliases));
+			aliases = realloc(aliases, sizeof(sep) * (naliases + 1));
+			if (!aliases) {
+				ULOG_ERR("out of memory\n");
+				goto out;
+			}
+
+			aliases[naliases++] = sep;
 		}
 		strings = &sep[strlen(sep)];
 	}
@@ -404,6 +406,8 @@ out:
 	if (fd >= 0)
 		close(fd);
 
+	free(aliases);
+
 	return m;
 }
 
@@ -413,7 +417,7 @@ static int scan_module_folder(const char *dir)
 	struct utsname ver;
 	char *path;
 	glob_t gl;
-	int j;
+	int j, rv = 0;
 
 	uname(&ver);
 	path = alloca(strlen(dir) + sizeof("*.ko") + 1);
@@ -430,13 +434,15 @@ static int scan_module_folder(const char *dir)
 			continue;
 
 		m = find_module(name);
-		if (!m)
-			get_module_info(gl.gl_pathv[j], name);
+		if (!m) {
+			if (!get_module_info(gl.gl_pathv[j], name))
+				rv |= -1;
+		}
 	}
 
 	globfree(&gl);
 
-	return 0;
+	return rv;
 }
 
 static int scan_module_folders(void)
