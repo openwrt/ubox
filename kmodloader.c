@@ -95,8 +95,10 @@ static int init_module_folders(void)
 		if (!stat(path, &st) && S_ISDIR(st.st_mode)) {
 			module_folders = realloc(module_folders, sizeof(p) * (n + 2));
 
-			if (!module_folders)
+			if (!module_folders) {
+				ULOG_ERR("out of memory\n");
 				return -1;
+			}
 
 			module_folders[n++] = strdup(path);
 		}
@@ -569,8 +571,10 @@ static int insert_module(char *path, const char *options)
 	}
 
 	data = malloc(s.st_size);
-	if (!data)
+	if (!data) {
+		ULOG_ERR("out of memory\n");
 		goto out;
+	}
 
 	if (read(fd, data, s.st_size) == s.st_size) {
 		ret = syscall(__NR_init_module, data, (unsigned long) s.st_size, options);
@@ -703,6 +707,7 @@ static int main_insmod(int argc, char **argv)
 
 	options = malloc(len);
 	if (!options) {
+		ULOG_ERR("out of memory\n");
 		ret = -1;
 		goto err;
 	}
@@ -912,8 +917,10 @@ static int main_loader(int argc, char **argv)
 		dir = argv[1];
 
 	path = malloc(strlen(dir) + 2);
-	if (!path)
+	if (!path) {
+		ULOG_ERR("out of memory\n");
 		return -1;
+	}
 
 	strcpy(path, dir);
 	strcat(path, "*");
