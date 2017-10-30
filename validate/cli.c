@@ -175,7 +175,7 @@ static int
 validate_option(struct uci_context *ctx, char *package, char *section, char *option)
 {
 	char *opt, *expr, *def;
-	struct uci_ptr ptr = { 0 };
+	struct uci_ptr ptr = {};
 
 	if (!parse_tuple(option, &opt, &expr, &def))
 	{
