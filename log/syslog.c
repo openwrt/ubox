@@ -172,12 +172,12 @@ klog_cb(struct ustream *s, int bytes)
 	} while (1);
 }
 
-struct ustream_fd slog = {
+static struct ustream_fd slog = {
 	.stream.string_data = true,
 	.stream.notify_read = slog_cb,
 };
 
-struct ustream_fd klog = {
+static struct ustream_fd klog = {
 	.stream.string_data = true,
 	.stream.notify_read = klog_cb,
 };
