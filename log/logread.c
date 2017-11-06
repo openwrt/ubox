@@ -240,11 +240,17 @@ static void logread_fd_data_cb(struct ustream *s, int bytes)
 		uloop_end();
 }
 
+static void logread_fd_state_cb(struct ustream *s)
+{
+	uloop_end();
+}
+
 static void logread_fd_cb(struct ubus_request *req, int fd)
 {
 	static struct ustream_fd test_fd;
 
 	test_fd.stream.notify_read = logread_fd_data_cb;
+	test_fd.stream.notify_state = logread_fd_state_cb;
 	ustream_fd_init(&test_fd, fd);
 }
 
