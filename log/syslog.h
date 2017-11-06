@@ -14,6 +14,8 @@
 #ifndef __SYSLOG_H
 #define __SYSLOG_H
 
+#define LOG_LINE_SIZE		1024
+
 enum {
 	SOURCE_KLOG = 0,
 	SOURCE_SYSLOG = 1,

@@ -37,8 +37,6 @@
 #define LOG_DEFAULT_SOCKET	"/dev/log"
 #define SYSLOG_PADDING		16
 
-#define MAXLINE			1024
-
 #define KLOG_DEFAULT_PROC	"/proc/kmsg"
 
 #define PAD(x) (x % 4) ? (((x) - (x % 4)) + 4) : (x)
@@ -133,13 +131,13 @@ log_add(char *buf, int size, int source)
 static void
 syslog_handle_fd(struct uloop_fd *fd, unsigned int events)
 {
-	static char buf[MAXLINE];
+	static char buf[LOG_LINE_SIZE];
 	int len;
 
 	while (1) {
 		char *c;
 
-		len = recv(fd->fd, buf, MAXLINE - 1, 0);
+		len = recv(fd->fd, buf, LOG_LINE_SIZE - 1, 0);
 		if (len < 0) {
 			if (errno == EINTR)
 				continue;

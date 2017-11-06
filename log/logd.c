@@ -167,10 +167,18 @@ write_log(struct ubus_context *ctx, struct ubus_object *obj,
 	char *event;
 
 	if (msg) {
+		int len;
+
 		blobmsg_parse(&write_policy, 1, &tb, blob_data(msg), blob_len(msg));
 		if (tb) {
 			event = blobmsg_get_string(tb);
-			log_add(event, strlen(event) + 1, SOURCE_SYSLOG);
+			len = strlen(event) + 1;
+			if (len > LOG_LINE_SIZE) {
+				len = LOG_LINE_SIZE;
+				event[len - 1] = 0;
+			}
+
+			log_add(event, len, SOURCE_SYSLOG);
 		}
 	}
 
