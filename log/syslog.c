@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <syslog.h>
+#include <errno.h>
 
 #include <libubox/uloop.h>
 #include <libubox/usock.h>
@@ -34,8 +35,9 @@
 
 #define LOG_DEFAULT_SIZE	(16 * 1024)
 #define LOG_DEFAULT_SOCKET	"/dev/log"
-#define LOG_LINE_LEN		256
 #define SYSLOG_PADDING		16
+
+#define MAXLINE			1024
 
 #define KLOG_DEFAULT_PROC	"/proc/kmsg"
 
@@ -129,26 +131,32 @@ log_add(char *buf, int size, int source)
 }
 
 static void
-slog_cb(struct ustream *s, int bytes)
+syslog_handle_fd(struct uloop_fd *fd, unsigned int events)
 {
-	struct ustream_buf *buf = s->r.head;
-	char *str;
+	static char buf[MAXLINE];
 	int len;
 
-	do {
-		str = ustream_get_read_buf(s, NULL);
-		if (!str)
+	while (1) {
+		char *c;
+
+		len = recv(fd->fd, buf, MAXLINE - 1, 0);
+		if (len < 0) {
+			if (errno == EINTR)
+				continue;
+
 			break;
-		len = strlen(buf->data);
-		if (!len) {
-			bytes -= 1;
-			ustream_consume(s, 1);
-			continue;
 		}
-		log_add(buf->data, len + 1, SOURCE_SYSLOG);
-		ustream_consume(s, len);
-		bytes -= len;
-	} while (bytes > 0);
+		if (!len)
+			break;
+
+		buf[len] = 0;
+		for (c = buf; *c; c++) {
+		    if (*c == '\n')
+			*c = ' ';
+		}
+
+		log_add(buf, c - buf + 1, SOURCE_SYSLOG);
+	}
 }
 
 static void
@@ -172,9 +180,8 @@ klog_cb(struct ustream *s, int bytes)
 	} while (1);
 }
 
-static struct ustream_fd slog = {
-	.stream.string_data = true,
-	.stream.notify_read = slog_cb,
+static struct uloop_fd syslog_fd = {
+	.cb = syslog_handle_fd
 };
 
 static struct ustream_fd klog = {
@@ -200,16 +207,15 @@ klog_open(void)
 static int
 syslog_open(void)
 {
-	int fd;
-
 	unlink(log_dev);
-	fd = usock(USOCK_UNIX | USOCK_UDP | USOCK_SERVER | USOCK_NONBLOCK, log_dev, NULL);
-	if (fd < 0) {
+	syslog_fd.fd = usock(USOCK_UNIX | USOCK_UDP | USOCK_SERVER | USOCK_NONBLOCK, log_dev, NULL);
+	if (syslog_fd.fd < 0) {
 		fprintf(stderr,"Failed to open %s\n", log_dev);
 		return -1;
 	}
 	chmod(log_dev, 0666);
-	ustream_fd_init(&slog, fd);
+	uloop_fd_add(&syslog_fd, ULOOP_READ | ULOOP_EDGE_TRIGGER);
+
 	return 0;
 }
 
@@ -295,9 +301,12 @@ log_init(int _log_size)
 void
 log_shutdown(void)
 {
-	ustream_free(&slog.stream);
+	if (syslog_fd.registered) {
+		uloop_fd_delete(&syslog_fd);
+		close(syslog_fd.fd);
+	}
+
 	ustream_free(&klog.stream);
-	close(slog.fd.fd);
 	close(klog.fd.fd);
 	free(log);
 	regfree(&pat_prio);
