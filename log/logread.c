@@ -100,7 +100,7 @@ static int log_notify(struct blob_attr *msg)
 {
 	struct blob_attr *tb[__LOG_MAX];
 	struct stat s;
-	char buf[512];
+	char buf[LOG_LINE_SIZE + 128];
 	char buf_ts[32];
 	uint32_t p;
 	time_t t;
