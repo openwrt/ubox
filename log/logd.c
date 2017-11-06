@@ -34,12 +34,14 @@ static LIST_HEAD(clients);
 enum {
 	READ_LINES,
 	READ_STREAM,
+	READ_ONESHOT,
 	__READ_MAX
 };
 
 static const struct blobmsg_policy read_policy[__READ_MAX] = {
 	[READ_LINES] = { .name = "lines", .type = BLOBMSG_TYPE_INT32 },
 	[READ_STREAM] = { .name = "stream", .type = BLOBMSG_TYPE_BOOL },
+	[READ_ONESHOT] = { .name = "oneshot", .type = BLOBMSG_TYPE_BOOL },
 };
 
 static const struct blobmsg_policy write_policy =
@@ -68,6 +70,14 @@ static void client_notify_state(struct ustream *s)
 	client_close(s);
 }
 
+static void client_notify_write(struct ustream *s, int bytes)
+{
+	if (ustream_pending_data(s, true))
+		return;
+
+	client_close(s);
+}
+
 static void
 log_fill_msg(struct blob_buf *b, struct log_head *l)
 {
@@ -90,6 +100,7 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 	int fds[2];
 	int ret;
 	bool stream = true;
+	bool oneshot = false;
 	void *c, *e;
 
 	if (!stream)
@@ -101,6 +112,8 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 			count = blobmsg_get_u32(tb[READ_LINES]);
 		if (tb[READ_STREAM])
 			stream = blobmsg_get_bool(tb[READ_STREAM]);
+		if (tb[READ_ONESHOT])
+			oneshot = blobmsg_get_bool(tb[READ_ONESHOT]);
 	}
 
 	l = log_list(count, NULL);
@@ -123,6 +136,11 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 			ret = ustream_write(&cl->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false);
 			if (ret < 0)
 				break;
+		}
+
+		if (oneshot) {
+			cl->s.stream.notify_write = client_notify_write;
+			client_notify_write(&cl->s.stream, 0);
 		}
 	} else {
 		blob_buf_init(&b, 0);
