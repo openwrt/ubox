@@ -236,8 +236,6 @@ static void logread_fd_data_cb(struct ustream *s, int bytes)
 		log_notify(a);
 		ustream_consume(s, cur_len);
 	}
-	if (!log_follow)
-		uloop_end();
 }
 
 static void logread_fd_state_cb(struct ustream *s)
@@ -337,6 +335,7 @@ int main(int argc, char **argv)
 
 		blob_buf_init(&b, 0);
 		blobmsg_add_u8(&b, "stream", 1);
+		blobmsg_add_u8(&b, "oneshot", !log_follow);
 		if (lines)
 			blobmsg_add_u32(&b, "lines", lines);
 		else if (log_follow)
