@@ -103,7 +103,6 @@ static int log_notify(struct blob_attr *msg)
 	char buf[512];
 	char buf_ts[32];
 	uint32_t p;
-	char *str;
 	time_t t;
 	uint32_t t_ms = 0;
 	char *c, *m;
@@ -145,7 +144,7 @@ static int log_notify(struct blob_attr *msg)
 	c = ctime(&t);
 	p = blobmsg_get_u32(tb[LOG_PRIO]);
 	c[strlen(c) - 1] = '\0';
-	str = blobmsg_format_json(msg, true);
+
 	if (log_type == LOG_NET) {
 		int err;
 
@@ -191,7 +190,6 @@ static int log_notify(struct blob_attr *msg)
 		ret = write(sender.fd, buf, strlen(buf));
 	}
 
-	free(str);
 	if (log_type == LOG_FILE)
 		fsync(sender.fd);
 
