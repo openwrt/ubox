@@ -103,13 +103,13 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 			stream = blobmsg_get_bool(tb[READ_STREAM]);
 	}
 
-	if (pipe(fds) == -1) {
-		fprintf(stderr, "logd: failed to create pipe: %s\n", strerror(errno));
-		return -1;
-	}
-
 	l = log_list(count, NULL);
 	if (stream) {
+		if (pipe(fds) == -1) {
+			fprintf(stderr, "logd: failed to create pipe: %s\n", strerror(errno));
+			return -1;
+		}
+
 		ubus_request_set_fd(ctx, req, fds[0]);
 		cl = calloc(1, sizeof(*cl));
 		cl->s.stream.notify_state = client_notify_state;
