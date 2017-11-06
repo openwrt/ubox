@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <syslog.h>
 #include <errno.h>
+#include <ctype.h>
 
 #include <libubox/uloop.h>
 #include <libubox/usock.h>
@@ -63,6 +64,7 @@ log_add(char *buf, int size, int source)
 	struct log_head *next;
 	int priority = 0;
 	int ret;
+	char *c;
 
 	/* bounce out if we don't have init'ed yet (regmatch etc will blow) */
 	if (!log) {
@@ -70,11 +72,18 @@ log_add(char *buf, int size, int source)
 		return;
 	}
 
-	/* strip trailing newline */
-	if (buf[size - 2] == '\n') {
-		buf[size - 2] = '\0';
-		size -= 1;
+	for (c = buf; *c; c++) {
+		if (*c == '\n')
+		*c = ' ';
 	}
+
+	c = buf + size - 2;
+	while (isspace(*c)) {
+		size--;
+		c--;
+	}
+
+	buf[size - 1] = 0;
 
 	/* strip the priority */
 	ret = regexec(&pat_prio, buf, 3, matches, 0);
@@ -135,8 +144,6 @@ syslog_handle_fd(struct uloop_fd *fd, unsigned int events)
 	int len;
 
 	while (1) {
-		char *c;
-
 		len = recv(fd->fd, buf, LOG_LINE_SIZE - 1, 0);
 		if (len < 0) {
 			if (errno == EINTR)
@@ -148,12 +155,8 @@ syslog_handle_fd(struct uloop_fd *fd, unsigned int events)
 			break;
 
 		buf[len] = 0;
-		for (c = buf; *c; c++) {
-		    if (*c == '\n')
-			*c = ' ';
-		}
 
-		log_add(buf, c - buf + 1, SOURCE_SYSLOG);
+		log_add(buf, strlen(buf) + 1, SOURCE_SYSLOG);
 	}
 }
 
