@@ -78,12 +78,11 @@ static int initd_parse(const char *file)
 	}
 	buffer[len] = '\0';
 
-	i = malloc(sizeof(struct initd));
+	i = calloc(1, sizeof(struct initd));
 	if (!i) {
 		fprintf(stderr, "failed to alloc initd struct\n");
 		return -1;
 	}
-	memset(i, 0, sizeof(*i));
 
 	if (!regexec(&pat_provides, buffer, 2, matches, 0))
 		i->name = strndup(buffer + matches[1].rm_so, (size_t)matches[1].rm_eo - matches[1].rm_so);

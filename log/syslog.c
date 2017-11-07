@@ -246,14 +246,12 @@ log_list(int count, struct log_head *h)
 int
 log_buffer_init(int size)
 {
-	struct log_head *_log = malloc(size);
+	struct log_head *_log = calloc(1, size);
 
 	if (!_log) {
 		fprintf(stderr, "Failed to initialize log buffer with size %d\n", log_size);
 		return -1;
 	}
-
-	memset(_log, 0, size);
 
 	if (log && ((log_size + sizeof(struct log_head)) < size)) {
 		struct log_head *start = _log;
