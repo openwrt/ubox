@@ -119,7 +119,7 @@ read_log(struct ubus_context *ctx, struct ubus_object *obj,
 	l = log_list(count, NULL);
 	if (stream) {
 		if (pipe(fds) == -1) {
-			fprintf(stderr, "logd: failed to create pipe: %s\n", strerror(errno));
+			fprintf(stderr, "logd: failed to create pipe: %m\n");
 			return -1;
 		}
 

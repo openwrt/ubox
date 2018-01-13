@@ -78,7 +78,7 @@ static void log_handle_reconnect(struct uloop_timeout *timeout)
 {
 	sender.fd = usock((log_udp) ? (USOCK_UDP) : (USOCK_TCP), log_ip, log_port);
 	if (sender.fd < 0) {
-		fprintf(stderr, "failed to connect: %s\n", strerror(errno));
+		fprintf(stderr, "failed to connect: %m\n");
 		uloop_timeout_set(&retry, 1000);
 	} else {
 		uloop_fd_add(&sender, ULOOP_READ);
@@ -126,7 +126,7 @@ static int log_notify(struct blob_attr *msg)
 		}
 		sender.fd = open(log_file, O_CREAT | O_WRONLY | O_APPEND, 0600);
 		if (sender.fd < 0) {
-			fprintf(stderr, "failed to open %s: %s\n", log_file, strerror(errno));
+			fprintf(stderr, "failed to open %s: %m\n", log_file);
 			exit(-1);
 		}
 	}
@@ -358,7 +358,7 @@ int main(int argc, char **argv)
 			log_type = LOG_FILE;
 			sender.fd = open(log_file, O_CREAT | O_WRONLY| O_APPEND, 0600);
 			if (sender.fd < 0) {
-				fprintf(stderr, "failed to open %s: %s\n", log_file, strerror(errno));
+				fprintf(stderr, "failed to open %s: %m\n", log_file);
 				exit(-1);
 			}
 		} else {

@@ -50,9 +50,9 @@ int main(int argc, char *argv[])
 		if (nbtot <= sizeof(buf))
 			len = nbtot;
 		if (syscall(SYS_getrandom, buf, len, 0) == -1)
-			ERROR_EXIT("getrandom() failed: %s\n", strerror(errno));
+			ERROR_EXIT("getrandom() failed: %m\n");
 		if (write(STDOUT_FILENO, buf, len) != len)
-			ERROR_EXIT("write() failed: %s\n", strerror(errno));
+			ERROR_EXIT("write() failed: %m\n");
 		nbtot -= sizeof(buf);
 	}
 
