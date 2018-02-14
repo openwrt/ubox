@@ -250,6 +250,29 @@ static void logread_fd_cb(struct ubus_request *req, int fd)
 	ustream_fd_init(&test_fd, fd);
 }
 
+static void logread_setup_output(void)
+{
+	if (sender.fd || sender.cb)
+		return;
+
+	if (log_ip && log_port) {
+		openlog("logread", LOG_PID, LOG_DAEMON);
+		log_type = LOG_NET;
+		sender.cb = log_handle_fd;
+		retry.cb = log_handle_reconnect;
+		uloop_timeout_set(&retry, 1000);
+	} else if (log_file) {
+		log_type = LOG_FILE;
+		sender.fd = open(log_file, O_CREAT | O_WRONLY| O_APPEND, 0600);
+		if (sender.fd < 0) {
+			fprintf(stderr, "failed to open %s: %m\n", log_file);
+			exit(-1);
+		}
+	} else {
+		sender.fd = STDOUT_FILENO;
+	}
+}
+
 int main(int argc, char **argv)
 {
 	static struct ubus_request req;
@@ -339,6 +362,8 @@ int main(int argc, char **argv)
 			continue;
 		}
 
+		logread_setup_output();
+
 		blob_buf_init(&b, 0);
 		blobmsg_add_u8(&b, "stream", 1);
 		blobmsg_add_u8(&b, "oneshot", !log_follow);
@@ -346,24 +371,6 @@ int main(int argc, char **argv)
 			blobmsg_add_u32(&b, "lines", lines);
 		else if (log_follow)
 			blobmsg_add_u32(&b, "lines", 0);
-
-		if (log_ip && log_port) {
-			openlog("logread", LOG_PID, LOG_DAEMON);
-			log_type = LOG_NET;
-			sender.cb = log_handle_fd;
-			retry.cb = log_handle_reconnect;
-			uloop_timeout_set(&retry, 1000);
-		} else if (log_file) {
-			log_type = LOG_FILE;
-			sender.fd = open(log_file, O_CREAT | O_WRONLY| O_APPEND, 0600);
-			if (sender.fd < 0) {
-				fprintf(stderr, "failed to open %s: %m\n", log_file);
-				exit(-1);
-			}
-		} else {
-			sender.fd = STDOUT_FILENO;
-		}
-
 		ubus_invoke_async(ctx, id, "read", b.head, &req);
 		req.fd_cb = logread_fd_cb;
 		ubus_complete_request_async(ctx, &req);
