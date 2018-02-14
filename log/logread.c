@@ -353,6 +353,14 @@ int main(int argc, char **argv)
 		}
 	}
 
+	blob_buf_init(&b, 0);
+	blobmsg_add_u8(&b, "stream", 1);
+	blobmsg_add_u8(&b, "oneshot", !log_follow);
+	if (lines)
+		blobmsg_add_u32(&b, "lines", lines);
+	else if (log_follow)
+		blobmsg_add_u32(&b, "lines", 0);
+
 	/* ugly ugly ugly ... we need a real reconnect logic */
 	do {
 		ret = ubus_lookup_id(ctx, "log", &id);
@@ -364,14 +372,7 @@ int main(int argc, char **argv)
 
 		logread_setup_output();
 
-		blob_buf_init(&b, 0);
-		blobmsg_add_u8(&b, "stream", 1);
-		blobmsg_add_u8(&b, "oneshot", !log_follow);
-		if (lines)
-			blobmsg_add_u32(&b, "lines", lines);
-		else if (log_follow)
-			blobmsg_add_u32(&b, "lines", 0);
-		ubus_invoke_async(ctx, id, "read", b.head, &req);
+			ubus_invoke_async(ctx, id, "read", b.head, &req);
 		req.fd_cb = logread_fd_cb;
 		ubus_complete_request_async(ctx, &req);
 
