@@ -33,6 +33,8 @@
 #include "libubus.h"
 #include "syslog.h"
 
+#define LOGD_CONNECT_RETRY	10
+
 enum {
 	LOG_STDOUT,
 	LOG_FILE,
@@ -63,6 +65,7 @@ static const char *log_file, *log_ip, *log_port, *log_prefix, *pid_file, *hostna
 static int log_type = LOG_STDOUT;
 static int log_size, log_udp, log_follow, log_trailer_null = 0;
 static int log_timestamp;
+static int logd_conn_tries = LOGD_CONNECT_RETRY;
 
 static const char* getcodetext(int value, CODE *codetable) {
 	CODE *i;
@@ -238,12 +241,16 @@ static void logread_fd_data_cb(struct ustream *s, int bytes)
 
 static void logread_fd_state_cb(struct ustream *s)
 {
+	if (log_follow)
+		logd_conn_tries = LOGD_CONNECT_RETRY;
 	uloop_end();
 }
 
 static void logread_fd_cb(struct ubus_request *req, int fd)
 {
 	static struct ustream_fd test_fd;
+
+	memset(&test_fd, 0, sizeof(test_fd));
 
 	test_fd.stream.notify_read = logread_fd_data_cb;
 	test_fd.stream.notify_state = logread_fd_state_cb;
@@ -275,13 +282,11 @@ static void logread_setup_output(void)
 
 int main(int argc, char **argv)
 {
-	static struct ubus_request req;
 	struct ubus_context *ctx;
 	uint32_t id;
 	const char *ubus_socket = NULL;
 	int ch, ret, lines = 0;
 	static struct blob_buf b;
-	int tries = 5;
 
 	signal(SIGPIPE, SIG_IGN);
 
@@ -363,24 +368,27 @@ int main(int argc, char **argv)
 
 	/* ugly ugly ugly ... we need a real reconnect logic */
 	do {
+		struct ubus_request req = { 0 };
+
 		ret = ubus_lookup_id(ctx, "log", &id);
 		if (ret) {
 			fprintf(stderr, "Failed to find log object: %s\n", ubus_strerror(ret));
 			sleep(1);
 			continue;
 		}
-
+		logd_conn_tries = 0;
 		logread_setup_output();
 
-			ubus_invoke_async(ctx, id, "read", b.head, &req);
+		ubus_invoke_async(ctx, id, "read", b.head, &req);
 		req.fd_cb = logread_fd_cb;
 		ubus_complete_request_async(ctx, &req);
 
 		uloop_run();
-		ubus_free(ctx);
-		uloop_done();
 
-	} while (ret && tries--);
+	} while (logd_conn_tries--);
+
+	ubus_free(ctx);
+	uloop_done();
 
 	if (log_follow && pid_file)
 		unlink(pid_file);
