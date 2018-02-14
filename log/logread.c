@@ -322,6 +322,14 @@ int main(int argc, char **argv)
 	}
 	ubus_add_uloop(ctx);
 
+	if (log_follow && pid_file) {
+		FILE *fp = fopen(pid_file, "w+");
+		if (fp) {
+			fprintf(fp, "%d", getpid());
+			fclose(fp);
+		}
+	}
+
 	/* ugly ugly ugly ... we need a real reconnect logic */
 	do {
 		ret = ubus_lookup_id(ctx, "log", &id);
@@ -338,15 +346,6 @@ int main(int argc, char **argv)
 			blobmsg_add_u32(&b, "lines", lines);
 		else if (log_follow)
 			blobmsg_add_u32(&b, "lines", 0);
-		if (log_follow) {
-			if (pid_file) {
-				FILE *fp = fopen(pid_file, "w+");
-				if (fp) {
-					fprintf(fp, "%d", getpid());
-					fclose(fp);
-				}
-			}
-		}
 
 		if (log_ip && log_port) {
 			openlog("logread", LOG_PID, LOG_DAEMON);
@@ -374,6 +373,9 @@ int main(int argc, char **argv)
 		uloop_done();
 
 	} while (ret && tries--);
+
+	if (log_follow && pid_file)
+		unlink(pid_file);
 
 	return ret;
 }
