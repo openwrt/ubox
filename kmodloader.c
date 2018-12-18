@@ -637,14 +637,16 @@ static int load_modprobe(void)
 			if (mn->is_alias)
 				continue;
 			m = mn->m;
-			if ((m->state == PROBE) && (!deps_available(m, 0))) {
+			if ((m->state == PROBE) && (!deps_available(m, 0)) && m->error < 2) {
 				if (!insert_module(get_module_path(m->name), (m->opts) ? (m->opts) : (""))) {
 					m->state = LOADED;
 					m->error = 0;
 					loaded++;
 					continue;
 				}
-				m->error = 1;
+
+				if (++m->error > 1)
+					ULOG_ERR("failed to load %s\n", m->name);
 			}
 
 			if ((m->state == PROBE) || m->error)
