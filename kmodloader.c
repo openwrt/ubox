@@ -37,6 +37,8 @@
 #include <libubox/ulog.h>
 
 #define DEF_MOD_PATH "/modules/%s/"
+/* duplicated from in-kernel include/linux/module.h */
+#define MODULE_NAME_LEN (64 - sizeof(unsigned long))
 
 enum {
 	SCANNED,
@@ -157,7 +159,7 @@ static char* get_module_path(char *name)
 
 static char* get_module_name(char *path)
 {
-	static char name[33];
+	static char name[MODULE_NAME_LEN];
 	char *t;
 
 	strncpy(name, basename(path), sizeof(name) - 1);
