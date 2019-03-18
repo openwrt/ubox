@@ -617,12 +617,13 @@ static void load_moddeps(struct module *_m)
 	}
 }
 
-static int iterations = 0;
-static int load_modprobe(void)
+static int load_modprobe(bool allow_load_retry)
 {
-	int loaded, todo;
+	int loaded, skipped, failed;
 	struct module_node *mn;
 	struct module *m;
+	bool load_retry = false;
+	static bool first_iteration = true;
 
 	avl_for_each_element(&modules, mn, avl) {
 		if (mn->is_alias)
@@ -634,12 +635,13 @@ static int load_modprobe(void)
 
 	do {
 		loaded = 0;
-		todo = 0;
+		skipped = 0;
+		failed = 0;
 		avl_for_each_element(&modules, mn, avl) {
 			if (mn->is_alias)
 				continue;
 			m = mn->m;
-			if ((m->state == PROBE) && (!deps_available(m, 0)) && m->error < 2) {
+			if ((m->state == PROBE) && (!deps_available(m, 0)) && (!m->error || load_retry)) {
 				if (!insert_module(get_module_path(m->name), (m->opts) ? (m->opts) : (""))) {
 					m->state = LOADED;
 					m->error = 0;
@@ -647,17 +649,24 @@ static int load_modprobe(void)
 					continue;
 				}
 
-				if (++m->error > 1)
-					ULOG_ERR("failed to load %s\n", m->name);
+				m->error = 1;
 			}
 
-			if ((m->state == PROBE) || m->error)
-				todo++;
+			if (m->error)
+				failed++;
+			else if (m->state == PROBE)
+				skipped++;
 		}
-		iterations++;
-	} while (loaded);
 
-	return todo;
+		if (allow_load_retry) {
+			/* if we can't load anything else let's try to load failed modules */
+			load_retry = loaded ? (failed && !skipped) : (failed && !load_retry && !first_iteration);
+		}
+
+		first_iteration = false;
+	} while (loaded || load_retry);
+
+	return skipped + failed;
 }
 
 static int print_insmod_usage(void)
@@ -886,7 +895,7 @@ static int main_modprobe(int argc, char **argv)
 
 		m->state = PROBE;
 
-		fail = load_modprobe();
+		fail = load_modprobe(true);
 
 		if (fail) {
 			ULOG_ERR("%d module%s could not be probed\n",
@@ -974,14 +983,14 @@ static int main_loader(int argc, char **argv)
 				m->opts = strdup(opts);
 			m->state = PROBE;
 			if (basename(gl.gl_pathv[j])[0] - '0' <= 9)
-				load_modprobe();
+				load_modprobe(false);
 
 		}
 		free(mod);
 		fclose(fp);
 	}
 
-	fail = load_modprobe();
+	fail = load_modprobe(true);
 
 	if (fail) {
 		ULOG_ERR("%d module%s could not be probed\n",
