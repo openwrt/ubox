@@ -66,6 +66,18 @@ static int log_type = LOG_STDOUT;
 static int log_size, log_udp, log_follow, log_trailer_null = 0;
 static int log_timestamp;
 static int logd_conn_tries = LOGD_CONNECT_RETRY;
+static int facility_include;
+static int facility_exclude;
+
+/* check for facility filter; return 0 if message shall be dropped */
+static int check_facility_filter(int f)
+{
+	if (facility_include)
+		return !!(facility_include & (1 << f));
+	if (facility_exclude)
+		return !(facility_exclude & (1 << f));
+	return 1;
+}
 
 static const char* getcodetext(int value, CODE *codetable) {
 	CODE *i;
@@ -133,6 +145,10 @@ static int log_notify(struct blob_attr *msg)
 			exit(-1);
 		}
 	}
+	p = blobmsg_get_u32(tb[LOG_PRIO]);
+
+	if (!check_facility_filter(LOG_FAC(p)))
+			return 0;
 
 	m = blobmsg_get_string(tb[LOG_MSG]);
 	if (regexp_pattern &&
@@ -145,7 +161,6 @@ static int log_notify(struct blob_attr *msg)
 				(unsigned long)t, t_ms);
 	}
 	c = ctime(&t);
-	p = blobmsg_get_u32(tb[LOG_PRIO]);
 	c[strlen(c) - 1] = '\0';
 
 	if (log_type == LOG_NET) {
@@ -212,6 +227,8 @@ static int usage(const char *prog)
 		"    -p	<file>		PID file\n"
 		"    -h	<hostname>	Add hostname to the message\n"
 		"    -P	<prefix>	Prefix custom text to streamed messages\n"
+		"    -z	<facility>	handle only messages with given facility (0-23), repeatable\n"
+		"    -Z	<facility>	ignore messages with given facility (0-23), repeatable\n"
 		"    -f			Follow log messages\n"
 		"    -u			Use UDP as the protocol\n"
 		"    -t			Add an extra timestamp\n"
@@ -290,7 +307,7 @@ int main(int argc, char **argv)
 
 	signal(SIGPIPE, SIG_IGN);
 
-	while ((ch = getopt(argc, argv, "u0fcs:l:r:F:p:S:P:h:e:t")) != -1) {
+	while ((ch = getopt(argc, argv, "u0fcs:l:z:Z:r:F:p:S:P:h:e:t")) != -1) {
 		switch (ch) {
 		case 'u':
 			log_udp = 1;
@@ -319,6 +336,14 @@ int main(int argc, char **argv)
 			break;
 		case 'l':
 			lines = atoi(optarg);
+			break;
+		case 'z':
+			id = strtoul(optarg, NULL, 0) & 0x1f;
+			facility_include |= (1 << id);
+			break;
+		case 'Z':
+			id = strtoul(optarg, NULL, 0) & 0x1f;
+			facility_exclude |= (1 << id);
 			break;
 		case 'S':
 			log_size = atoi(optarg);
