@@ -678,7 +678,10 @@ static int print_insmod_usage(void)
 
 static int print_modprobe_usage(void)
 {
-	ULOG_INFO("Usage:\n\tmodprobe [-q] filename\n");
+	ULOG_INFO(
+		"Usage:\n"
+		"\tmodprobe [-q] [-v] filename\n"
+	);
 
 	return -1;
 }
@@ -855,13 +858,17 @@ static int main_modprobe(int argc, char **argv)
 	struct module *m;
 	char *name;
 	char *mod = NULL;
+	int log_level = LOG_WARNING;
 	int opt;
 	bool quiet = false;
 
-	while ((opt = getopt(argc, argv, "q")) != -1 ) {
+	while ((opt = getopt(argc, argv, "qv")) != -1 ) {
 		switch (opt) {
 			case 'q': /* shhhh! */
 				quiet = true;
+				break;
+			case 'v':
+				log_level = LOG_DEBUG;
 				break;
 			default: /* '?' */
 				return print_modprobe_usage();
@@ -871,6 +878,9 @@ static int main_modprobe(int argc, char **argv)
 
 	if (optind >= argc)
 		return print_modprobe_usage(); /* expected module after options */
+
+	/* after print_modprobe_usage() so it won't be filtered out */
+	ulog_threshold(log_level);
 
 	mod = argv[optind];
 
