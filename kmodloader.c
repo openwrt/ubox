@@ -108,8 +108,10 @@ static int init_module_folders(void)
 		s = p + 1;
 	}
 
-	if (!module_folders)
+	if (!module_folders) {
+		ULOG_ERR("no module folders for kernel version %s found\n", ver.release);
 		return -1;
+	}
 
 	module_folders[n] = NULL;
 	return 0;
