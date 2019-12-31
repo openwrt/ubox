@@ -683,6 +683,7 @@ static int print_modprobe_usage(void)
 	ULOG_INFO(
 		"Usage:\n"
 		"\tmodprobe [-q] [-v] filename\n"
+		"\tmodprobe -a [-q] [-v] filename [filename...]\n"
 	);
 
 	return -1;
@@ -858,14 +859,18 @@ static int main_modprobe(int argc, char **argv)
 {
 	struct module_node *mn;
 	struct module *m;
-	char *name;
-	char *mod = NULL;
+	int exit_code = 0;
+	int load_fail;
 	int log_level = LOG_WARNING;
 	int opt;
 	bool quiet = false;
+	bool use_all = false;
 
-	while ((opt = getopt(argc, argv, "qv")) != -1 ) {
+	while ((opt = getopt(argc, argv, "aqv")) != -1 ) {
 		switch (opt) {
+			case 'a':
+				use_all = true;
+				break;
 			case 'q': /* shhhh! */
 				quiet = true;
 				break;
@@ -884,48 +889,51 @@ static int main_modprobe(int argc, char **argv)
 	/* after print_modprobe_usage() so it won't be filtered out */
 	ulog_threshold(log_level);
 
-	mod = argv[optind];
-
 	if (scan_module_folders())
 		return -1;
 
 	if (scan_loaded_modules())
 		return -1;
 
-	name = get_module_name(mod);
-	m = find_module(name);
-	if (m && m->state == LOADED) {
-		if (!quiet)
-			ULOG_ERR("%s is already loaded\n", name);
-		return 0;
-	} else if (!m) {
-		if (!quiet)
-			ULOG_ERR("failed to find a module named %s\n", name);
-		return -1;
-	} else {
-		int fail;
+	do {
+		char *name;
 
-		m->state = PROBE;
+		name = get_module_name(argv[optind]);
+		m = find_module(name);
 
-		fail = load_modprobe(true);
-
-		if (fail) {
-			ULOG_ERR("%d module%s could not be probed\n",
-			         fail, (fail == 1) ? ("") : ("s"));
-
-			avl_for_each_element(&modules, mn, avl) {
-				if (mn->is_alias)
-					continue;
-				m = mn->m;
-				if ((m->state == PROBE) || m->error)
-					ULOG_ERR("- %s\n", m->name);
-			}
+		if (m && m->state == LOADED) {
+			if (!quiet)
+				ULOG_INFO("%s is already loaded\n", name);
+		} else if (!m) {
+			if (!quiet)
+				ULOG_ERR("failed to find a module named %s\n", name);
+			exit_code = -1;
+		} else {
+			m->state = PROBE;
 		}
+
+		optind++;
+	} while (use_all && optind < argc);
+
+	load_fail = load_modprobe(true);
+	if (load_fail) {
+		ULOG_ERR("%d module%s could not be probed\n",
+		         load_fail, (load_fail == 1) ? ("") : ("s"));
+
+		avl_for_each_element(&modules, mn, avl) {
+			if (mn->is_alias)
+				continue;
+			m = mn->m;
+			if ((m->state == PROBE) || m->error)
+				ULOG_ERR("- %s\n", m->name);
+		}
+
+		exit_code = -1;
 	}
 
 	free_modules();
 
-	return 0;
+	return exit_code;
 }
 
 static int main_loader(int argc, char **argv)
