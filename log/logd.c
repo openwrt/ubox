@@ -11,6 +11,8 @@
  * GNU General Public License for more details.
  */
 
+#include <sys/types.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <syslog.h>
@@ -238,6 +240,7 @@ int
 main(int argc, char **argv)
 {
 	int ch, log_size = 16;
+	struct passwd *p = NULL;
 
 	signal(SIGPIPE, SIG_IGN);
 	while ((ch = getopt(argc, argv, "S:")) != -1) {
@@ -255,6 +258,11 @@ main(int argc, char **argv)
 	log_init(log_size);
 	conn.cb = ubus_connect_handler;
 	ubus_auto_connect(&conn);
+	p = getpwnam("logd");
+	if (p) {
+		setuid(p->pw_uid);
+		setgid(p->pw_gid);
+	}
 	uloop_run();
 	log_shutdown();
 	uloop_done();
