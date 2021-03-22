@@ -260,8 +260,15 @@ main(int argc, char **argv)
 	ubus_auto_connect(&conn);
 	p = getpwnam("logd");
 	if (p) {
-		setuid(p->pw_uid);
-		setgid(p->pw_gid);
+		if (setuid(p->pw_uid) < 0) {
+			fprintf(stderr, "setuid() failed: %s\n", strerror(errno));
+			exit(1);
+		}
+
+		if (setgid(p->pw_gid) < 0) {
+			fprintf(stderr, "setgid() failed: %s\n", strerror(errno));
+			exit(1);
+		}
 	}
 	uloop_run();
 	log_shutdown();
