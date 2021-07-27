@@ -260,13 +260,13 @@ main(int argc, char **argv)
 	ubus_auto_connect(&conn);
 	p = getpwnam("logd");
 	if (p) {
-		if (setuid(p->pw_uid) < 0) {
-			fprintf(stderr, "setuid() failed: %s\n", strerror(errno));
+		if (setgid(p->pw_gid) < 0) {
+			fprintf(stderr, "setgid() failed: %s\n", strerror(errno));
 			exit(1);
 		}
 
-		if (setgid(p->pw_gid) < 0) {
-			fprintf(stderr, "setgid() failed: %s\n", strerror(errno));
+		if (setuid(p->pw_uid) < 0) {
+			fprintf(stderr, "setuid() failed: %s\n", strerror(errno));
 			exit(1);
 		}
 	}
