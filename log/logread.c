@@ -97,7 +97,13 @@ static void log_handle_reconnect(struct uloop_timeout *timeout)
 		uloop_timeout_set(&retry, 1000);
 	} else {
 		uloop_fd_add(&sender, ULOOP_READ);
-		syslog(LOG_INFO, "Logread connected to %s:%s\n", log_ip, log_port);
+
+		if (log_udp < 2)
+			syslog(LOG_INFO, "Logread connected to %s:%s via %s\n",
+				log_ip, log_port, (log_udp) ? ("udp") : ("tcp"));
+
+		if (log_udp == 1)
+			++log_udp;
 	}
 }
 
@@ -192,7 +198,7 @@ static int log_notify(struct blob_attr *msg)
 		}
 
 		if (err < 0) {
-			syslog(LOG_INFO, "failed to send log data to %s:%s via %s\n",
+			syslog(LOG_INFO, "Failed to send log data to %s:%s via %s\n",
 				log_ip, log_port, (log_udp) ? ("udp") : ("tcp"));
 			uloop_fd_delete(&sender);
 			close(sender.fd);
