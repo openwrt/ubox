@@ -30,11 +30,13 @@
 #include <libgen.h>
 #include <glob.h>
 #include <elf.h>
+#include <ctype.h>
 
 #include <libubox/avl.h>
 #include <libubox/avl-cmp.h>
 #include <libubox/utils.h>
 #include <libubox/ulog.h>
+#include <libubox/kvlist.h>
 
 #define DEF_MOD_PATH "/modules/%s/"
 /* duplicated from in-kernel include/linux/module.h */
@@ -44,6 +46,7 @@ enum {
 	SCANNED,
 	PROBE,
 	LOADED,
+	BLACKLISTED,
 };
 
 struct module {
@@ -65,6 +68,7 @@ struct module_node {
 };
 
 static struct avl_tree modules;
+static KVLIST(options, kvlist_strlen);
 
 static char **module_folders = NULL;
 
@@ -435,15 +439,29 @@ static int scan_module_folder(const char *dir)
 	for (j = 0; j < gl.gl_pathc; j++) {
 		char *name = get_module_name(gl.gl_pathv[j]);
 		struct module *m;
+		char *opts;
 
 		if (!name)
 			continue;
 
 		m = find_module(name);
+		if (m)
+			continue;
+
+		m = get_module_info(gl.gl_pathv[j], name);
 		if (!m) {
-			if (!get_module_info(gl.gl_pathv[j], name))
-				rv |= -1;
+			rv |= -1;
+			continue;
 		}
+
+		opts = kvlist_get(&options, name);
+		if (!opts)
+			continue;
+
+		if (*opts == '\x01')
+			m->state = BLACKLISTED;
+		else
+			m->opts = strdup(opts);
 	}
 
 	globfree(&gl);
@@ -901,7 +919,10 @@ static int main_modprobe(int argc, char **argv)
 		name = get_module_name(argv[optind]);
 		m = find_module(name);
 
-		if (m && m->state == LOADED) {
+		if (m && m->state == BLACKLISTED) {
+			if (!quiet)
+				ULOG_INFO("%s is blacklisted\n", name);
+		} else if (m && m->state == LOADED) {
 			if (!quiet)
 				ULOG_INFO("%s is already loaded\n", name);
 		} else if (!m) {
@@ -996,11 +1017,19 @@ static int main_loader(int argc, char **argv)
 				*opts++ = '\0';
 
 			m = find_module(get_module_name(mod));
-			if (!m || (m->state == LOADED))
+			if (!m || m->state == LOADED || m->state == BLACKLISTED)
 				continue;
 
-			if (opts)
-				m->opts = strdup(opts);
+			if (opts) {
+				if (m->opts) {
+					char *prev = m->opts;
+
+					asprintf(&m->opts, "%s %s", prev, opts);
+					free(prev);
+				} else {
+					m->opts = strdup(opts);
+				}
+			}
 			m->state = PROBE;
 			if (basename(gl.gl_pathv[j])[0] - '0' <= 9)
 				load_modprobe(false);
@@ -1053,6 +1082,80 @@ static int avl_modcmp(const void *k1, const void *k2, void *ptr)
 	return (unsigned char)weight(*s1) - (unsigned char)weight(*s2);
 }
 
+static void
+load_options(void)
+{
+	static char buf[512];
+	char *s;
+	FILE *f;
+
+	f = fopen("/etc/modules.conf", "r");
+	if (!f)
+		return;
+
+	while ((s = fgets(buf, sizeof(buf), f)) != NULL) {
+		char *c, *cmd, *mod;
+
+		while (isspace(*s))
+			s++;
+
+		c = strchr(s, '#');
+		if (c)
+			*c = 0;
+
+		while (isspace(*s))
+			s++;
+
+		c = s + strlen(s);
+		while (c > s && isspace(c[-1])) {
+			c[-1] = 0;
+			c--;
+		}
+
+		cmd = strsep(&s, " \t");
+		if (!cmd || !*cmd)
+			continue;
+
+		while (isspace(*s))
+			s++;
+
+		mod = strsep(&s, " \t");
+		if (!mod || !*mod)
+			continue;
+
+		if (!strcmp(cmd, "blacklist")) {
+			kvlist_set(&options, mod, "\x01");
+			continue;
+		}
+
+		if (!strcmp(cmd, "options")) {
+			char *prev = kvlist_get(&options, mod);
+			char *val = NULL;
+
+			while (isspace(*s))
+				s++;
+
+			if (!*s)
+				continue;
+
+			if (prev && prev[0] == '\x01')
+				continue;
+
+			if (!prev) {
+				kvlist_set(&options, mod, s);
+				continue;
+			}
+
+			if (asprintf(&val, "%s %s", prev, s) < 0)
+				continue;
+
+			kvlist_set(&options, mod, val);
+			free(val);
+			continue;
+		}
+	}
+}
+
 int main(int argc, char **argv)
 {
 	char *exec = basename(*argv);
@@ -1069,6 +1172,8 @@ int main(int argc, char **argv)
 
 	if (!strcmp(exec, "modinfo"))
 		return main_modinfo(argc, argv);
+
+	load_options();
 
 	if (!strcmp(exec, "modprobe"))
 		return main_modprobe(argc, argv);
