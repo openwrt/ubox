@@ -965,7 +965,7 @@ static int main_loader(int argc, char **argv)
 	struct module *m;
 	glob_t gl;
 	char *path;
-	int fail, j;
+	int ret = 0, fail, j;
 
 	if (argc > 1)
 		dir = argv[1];
@@ -980,13 +980,13 @@ static int main_loader(int argc, char **argv)
 	strcat(path, "*");
 
 	if (scan_module_folders()) {
-		free (path);
-		return -1;
+		ret = -1;
+		goto free_path;
 	}
 
 	if (scan_loaded_modules()) {
-		free (path);
-		return -1;
+		ret = -1;
+		goto free_path;
 	}
 
 	ULOG_INFO("loading kernel modules from %s\n", path);
@@ -1024,8 +1024,15 @@ static int main_loader(int argc, char **argv)
 				if (m->opts) {
 					char *prev = m->opts;
 
-					asprintf(&m->opts, "%s %s", prev, opts);
+					fail = asprintf(&m->opts, "%s %s", prev, opts);
 					free(prev);
+					if (fail < 0) {
+						ULOG_ERR("out of memory for opts %s\n", opts);
+						free(mod);
+						fclose(fp);
+						ret = -1;
+						goto out;
+					}
 				} else {
 					m->opts = strdup(opts);
 				}
@@ -1058,9 +1065,10 @@ static int main_loader(int argc, char **argv)
 
 out:
 	globfree(&gl);
+free_path:
 	free(path);
 
-	return 0;
+	return ret;
 }
 
 static inline char weight(char c)
