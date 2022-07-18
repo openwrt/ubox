@@ -336,6 +336,11 @@ static int scan_loaded_modules(void)
 			/* possibly a module outside /lib/modules/<ver>/ */
 			n = alloc_module(m.name, NULL, 0, m.depends, m.size);
 		}
+		if (!n) {
+			ULOG_ERR("Failed to allocate memory for module\n");
+			return -1;
+		}
+
 		n->usage = m.usage;
 		n->state = LOADED;
 	}
@@ -582,6 +587,11 @@ static int insert_module(char *path, const char *options)
 	void *data = 0;
 	struct stat s;
 	int fd, ret = -1;
+
+	if (!path) {
+		ULOG_ERR("Path not specified\n");
+		return ret;
+	}
 
 	if (stat(path, &s)) {
 		ULOG_ERR("missing module %s\n", path);
@@ -1164,6 +1174,8 @@ load_options(void)
 			continue;
 		}
 	}
+
+	fclose(f);
 }
 
 int main(int argc, char **argv)
