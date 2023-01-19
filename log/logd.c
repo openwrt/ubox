@@ -207,7 +207,7 @@ ubus_notify_log(struct log_head *l)
 {
 	struct client *c;
 
-	if (list_empty(&clients))
+	if (list_empty(&clients) && !log_object.has_subscribers)
 		return;
 
 	blob_buf_init(&b, 0);
@@ -216,6 +216,9 @@ ubus_notify_log(struct log_head *l)
 	blobmsg_add_u32(&b, "priority", l->priority);
 	blobmsg_add_u32(&b, "source", l->source);
 	blobmsg_add_u64(&b, "time", (((__u64) l->ts.tv_sec) * 1000) + (l->ts.tv_nsec / 1000000));
+
+	if (log_object.has_subscribers)
+		ubus_notify(&conn.ctx, &log_object, "message", b.head, -1);
 
 	list_for_each_entry(c, &clients, list)
 		ustream_write(&c->s.stream, (void *) b.head, blob_len(b.head) + sizeof(struct blob_attr), false);
