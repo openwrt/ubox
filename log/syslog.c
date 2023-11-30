@@ -31,6 +31,7 @@
 #include <libubox/uloop.h>
 #include <libubox/usock.h>
 #include <libubox/ustream.h>
+#include <libubox/utils.h>
 
 #include "syslog.h"
 
@@ -48,6 +49,40 @@ static struct log_head *log, *log_end, *oldest, *newest;
 static int current_id = 0;
 static regex_t pat_prio;
 static regex_t pat_tstamp;
+static struct udebug ud;
+static struct udebug_buf udb_kernel, udb_user, udb_debug;
+static const struct udebug_buf_meta meta_kernel = {
+	.name = "kernel",
+	.format = UDEBUG_FORMAT_STRING,
+};
+static const struct udebug_buf_meta meta_user = {
+	.name = "syslog",
+	.format = UDEBUG_FORMAT_STRING,
+};
+static const struct udebug_buf_meta meta_debug = {
+	.name = "debug",
+	.format = UDEBUG_FORMAT_STRING,
+};
+static struct udebug_ubus_ring rings[] = {
+	{
+		.buf = &udb_kernel,
+		.meta = &meta_kernel,
+		.default_entries = 1024,
+		.default_size = 65536,
+	},
+	{
+		.buf = &udb_user,
+		.meta = &meta_user,
+		.default_entries = 1024,
+		.default_size = 65536,
+	},
+	{
+		.buf = &udb_debug,
+		.meta = &meta_debug,
+		.default_entries = 1024,
+		.default_size = 65536,
+	},
+};
 
 static struct log_head*
 log_next(struct log_head *h, int size)
@@ -57,10 +92,61 @@ log_next(struct log_head *h, int size)
 	return (n >= log_end) ? (log) : (n);
 }
 
+static uint64_t
+get_kernel_ts(const char *ts_sec, const char *ts_nsec)
+{
+	uint64_t ts = strtoull(ts_sec, NULL, 10) * UDEBUG_TS_SEC +
+		      strtoull(ts_nsec, NULL, 10) / 1000;
+	struct timespec wall, mono;
+
+	if (clock_gettime(CLOCK_REALTIME, &wall) ||
+	    clock_gettime(CLOCK_MONOTONIC, &mono))
+		return 0;
+
+	ts += (wall.tv_sec - mono.tv_sec) * UDEBUG_TS_SEC;
+	ts += (wall.tv_nsec - mono.tv_nsec) / 1000;
+
+	return ts;
+}
+
+static void
+log_add_udebug(int priority, char *buf, int size, int source)
+{
+	regmatch_t matches[4];
+	struct udebug_buf *udb;
+	uint64_t ts = 0;
+
+	if (source == SOURCE_KLOG)
+		udb = &udb_kernel;
+	else if ((priority & LOG_FACMASK) == LOG_LOCAL7)
+		udb = &udb_debug;
+	else
+		udb = &udb_user;
+
+	if (!udebug_buf_valid(udb))
+		return;
+
+	if (source == SOURCE_KLOG &&
+	    !regexec(&pat_tstamp, buf, 4, matches, 0)) {
+		ts = get_kernel_ts(&buf[matches[1].rm_so], &buf[matches[2].rm_so]);
+		buf += matches[3].rm_so;
+		size -= matches[3].rm_so;
+	}
+
+	if (!ts)
+		ts = udebug_timestamp();
+
+	udebug_entry_init_ts(udb, ts);
+	udebug_entry_printf(udb, "<%d>", priority);
+	udebug_entry_append(udb, buf, size - 1);
+	udebug_entry_add(udb);
+}
+
+
 void
 log_add(char *buf, int size, int source)
 {
-	regmatch_t matches[4];
+	regmatch_t matches[3];
 	struct log_head *next;
 	int priority = 0;
 	int ret;
@@ -93,22 +179,17 @@ log_add(char *buf, int size, int source)
 		buf += matches[2].rm_so;
 	}
 
-#if 0
-	/* strip kernel timestamp */
-	ret = regexec(&pat_tstamp,buf, 4, matches, 0);
-	if ((source == SOURCE_KLOG) && !ret) {
-		size -= matches[3].rm_so;
-		buf += matches[3].rm_so;
-	}
-#endif
-
 	/* strip syslog timestamp */
 	if ((source == SOURCE_SYSLOG) && (size > SYSLOG_PADDING) && (buf[SYSLOG_PADDING - 1] == ' ')) {
 		size -= SYSLOG_PADDING;
 		buf += SYSLOG_PADDING;
 	}
 
-	//fprintf(stderr, "-> %d - %s\n", priority, buf);
+	log_add_udebug(priority, buf, size, source);
+
+	/* debug message */
+	if ((priority & LOG_FACMASK) == LOG_LOCAL7)
+		return;
 
 	/* find new oldest entry */
 	next = log_next(newest, size);
@@ -278,6 +359,12 @@ log_buffer_init(int size)
 	return 0;
 }
 
+void log_udebug_config(struct udebug_ubus *ctx, struct blob_attr *data,
+		       bool enabled)
+{
+	udebug_ubus_apply_config(&ud, rings, ARRAY_SIZE(rings), data, enabled);
+}
+
 void
 log_init(int _log_size)
 {
@@ -285,12 +372,17 @@ log_init(int _log_size)
 		log_size = _log_size;
 
 	regcomp(&pat_prio, "^<([0-9]*)>(.*)", REG_EXTENDED);
-	regcomp(&pat_tstamp, "^\[[ 0]*([0-9]*).([0-9]*)] (.*)", REG_EXTENDED);
+	regcomp(&pat_tstamp, "^\\[[ 0]*([0-9]*).([0-9]*)\\] (.*)", REG_EXTENDED);
 
 	if (log_buffer_init(log_size)) {
 		fprintf(stderr, "Failed to allocate log memory\n");
 		exit(-1);
 	}
+
+	udebug_init(&ud);
+	udebug_auto_connect(&ud, NULL);
+	for (size_t i = 0; i < ARRAY_SIZE(rings); i++)
+		udebug_ubus_ring_init(&ud, &rings[i]);
 
 	syslog_open();
 	klog_open();

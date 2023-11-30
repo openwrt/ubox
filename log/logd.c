@@ -24,6 +24,7 @@
 #include <libubox/blobmsg.h>
 #include <libubox/list.h>
 #include <libubox/ustream.h>
+#include <libubox/utils.h>
 #include <libubus.h>
 
 #include "syslog.h"
@@ -31,6 +32,7 @@
 int debug = 0;
 static struct blob_buf b;
 static struct ubus_auto_conn conn;
+static struct udebug_ubus udebug;
 static LIST_HEAD(clients);
 
 enum {
@@ -261,6 +263,7 @@ main(int argc, char **argv)
 	log_init(log_size);
 	conn.cb = ubus_connect_handler;
 	ubus_auto_connect(&conn);
+	udebug_ubus_init(&udebug, &conn.ctx, "log", log_udebug_config);
 	p = getpwnam("logd");
 	if (p) {
 		if (setgid(p->pw_gid) < 0) {
@@ -274,6 +277,7 @@ main(int argc, char **argv)
 		}
 	}
 	uloop_run();
+	udebug_ubus_free(&udebug);
 	log_shutdown();
 	uloop_done();
 	ubus_auto_shutdown(&conn);

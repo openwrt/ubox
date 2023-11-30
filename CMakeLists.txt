@@ -57,7 +57,7 @@ INSTALL(TARGETS validate_data
 )
 
 ADD_EXECUTABLE(logd log/logd.c log/syslog.c)
-TARGET_LINK_LIBRARIES(logd ubox ubus)
+TARGET_LINK_LIBRARIES(logd ubox ubus udebug)
 INSTALL(TARGETS logd
 	RUNTIME DESTINATION sbin
 )

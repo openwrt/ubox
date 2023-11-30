@@ -16,6 +16,8 @@
 
 #define LOG_LINE_SIZE		1024
 
+#include <udebug.h>
+
 enum {
 	SOURCE_KLOG = 0,
 	SOURCE_SYSLOG = 1,
@@ -40,5 +42,7 @@ struct log_head* log_list(int count, struct log_head *h);
 int log_buffer_init(int size);
 void log_add(char *buf, int size, int source);
 void ubus_notify_log(struct log_head *l);
+void log_udebug_config(struct udebug_ubus *ctx, struct blob_attr *data,
+		       bool enabled);
 
 #endif
