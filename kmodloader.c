@@ -37,10 +37,18 @@
 #include <libubox/utils.h>
 #include <libubox/ulog.h>
 #include <libubox/kvlist.h>
+#include <libubox/list.h>
 
 #define DEF_MOD_PATH "/modules/%s/"
 /* duplicated from in-kernel include/linux/module.h */
 #define MODULE_NAME_LEN (64 - sizeof(unsigned long))
+
+struct param {
+	char *name;
+	char *desc;
+	char *type;
+	struct list_head list;
+};
 
 enum {
 	SCANNED,
@@ -495,9 +503,12 @@ static int print_modinfo(char *module)
 {
 	int fd = open(module, O_RDONLY);
 	unsigned int offset, size;
+	struct param *p;
 	struct stat s;
 	char *map = MAP_FAILED, *strings;
 	int rv = -1;
+
+	LIST_HEAD(params);
 
 	if (fd < 0) {
 		ULOG_ERR("failed to open %s\n", module);
@@ -523,8 +534,9 @@ static int print_modinfo(char *module)
 	strings = map + offset;
 	printf("module:\t\t%s\n", module);
 	while (true) {
+		char *pname, *pdata;
 		char *dup = NULL;
-		char *sep;
+		char *sep, *sep2;
 
 		while (!strings[0])
 			strings++;
@@ -540,10 +552,47 @@ static int print_modinfo(char *module)
 				printf("%s:\t\t%s\n",  dup, sep);
 			else
 				printf("%s:\t%s\n",  dup, sep);
+		} else {
+			sep2 = strstr(sep, ":");
+			if (!sep2)
+				break;
+			pname = strndup(sep, sep2 - sep);
+			sep2++;
+			pdata = strdup(sep2);
+
+			list_for_each_entry(p, &params, list)
+				if (!strcmp(pname, p->name))
+					break;
+
+			if (list_entry_is_h(p, &params, list)) {
+				p = alloca(sizeof(*p));
+				p->name = pname;
+				p->desc = p->type = NULL;
+				list_add(&p->list, &params);
+			} else {
+				free(pname);
+			}
+
+			if (!strcmp(dup, "parmtype"))
+				p->type = pdata;
+			else
+				p->desc = pdata;
 		}
 		strings = &sep[strlen(sep)];
 		if (dup)
 			free(dup);
+	}
+
+	list_for_each_entry(p, &params, list) {
+		printf("parm:\t\t%s",  p->name);
+		if (p->desc)
+			printf(":%s", p->desc);
+		if (p->type)
+			printf(" (%s)", p->type);
+		printf("\n");
+		free(p->name);
+		free(p->desc);
+		free(p->type);
 	}
 
 	rv = 0;
