@@ -431,12 +431,10 @@ out:
 static int scan_module_folder(const char *dir)
 {
 	int gl_flags = GLOB_NOESCAPE | GLOB_MARK;
-	struct utsname ver;
 	char *path;
 	glob_t gl;
 	int j, rv = 0;
 
-	uname(&ver);
 	path = alloca(strlen(dir) + sizeof("*.ko") + 1);
 	sprintf(path, "%s*.ko", dir);
 
