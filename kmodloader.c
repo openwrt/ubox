@@ -41,6 +41,7 @@
 
 #define DEF_MOD_PATH "/modules/%s/"
 #define MOD_BUILTIN "modules.builtin"
+#define MOD_BUILTIN_MODINFO "modules.builtin.modinfo"
 /* duplicated from in-kernel include/linux/module.h */
 #define MODULE_NAME_LEN (64 - sizeof(unsigned long))
 
@@ -365,33 +366,55 @@ out:
 
 static struct module* get_module_info(const char *module, const char *name)
 {
-	int fd = open(module, O_RDONLY);
+	const bool is_builtin = (module == NULL);
 	unsigned int offset, size;
 	char *map = MAP_FAILED, *strings, *dep = NULL;
 	const char **aliases = NULL;
 	const char **aliasesr;
-	int naliases = 0;
+	const char *mpath = NULL;
+	char path[350], **f;
+	int fd = -1, naliases = 0;
 	struct module *m = NULL;
 	struct stat s;
 
+	if (is_builtin)
+		for (f = module_folders; *f; f++) {
+			snprintf(path, sizeof(path), "%s%s", *f, MOD_BUILTIN_MODINFO);
+			if (!stat(path, &s) && S_ISREG(s.st_mode)) {
+				mpath = path;
+				break;
+			}
+		}
+	else
+		mpath = module;
+
+	if (!mpath) {
+		ULOG_ERR("cannot find modinfo path of module - %s\n", name);
+		goto out;
+	}
+
+	fd = open(mpath, O_RDONLY);
 	if (fd < 0) {
-		ULOG_ERR("failed to open %s\n", module);
+		ULOG_ERR("failed to open %s\n", mpath);
 		goto out;
 	}
 
 	if (fstat(fd, &s) == -1) {
-		ULOG_ERR("failed to stat %s\n", module);
+		ULOG_ERR("failed to stat %s\n", mpath);
 		goto out;
 	}
 
 	map = mmap(NULL, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (map == MAP_FAILED) {
-		ULOG_ERR("failed to mmap %s\n", module);
+		ULOG_ERR("failed to mmap %s\n", mpath);
 		goto out;
 	}
 
-	if (elf_find_section(map, ".modinfo", &offset, &size)) {
-		ULOG_ERR("failed to load the .modinfo section from %s\n", module);
+	if (is_builtin) {
+		offset = 0;
+		size = s.st_size;
+	} else if (elf_find_section(map, ".modinfo", &offset, &size)) {
+		ULOG_ERR("failed to load the .modinfo section from %s\n", mpath);
 		goto out;
 	}
 
@@ -404,6 +427,16 @@ static struct module* get_module_info(const char *module, const char *name)
 			strings++;
 		if (strings >= map + offset + size)
 			break;
+		if (is_builtin) {
+			sep = strstr(strings, ".");
+			if (!sep)
+				break;
+			if (strlen(name) == (sep - strings) &&
+			    !strncmp(strings, name, sep - strings))
+				strings = sep + 1;
+			else
+				goto next_string;
+		}
 		sep = strstr(strings, "=");
 		if (!sep)
 			break;
@@ -421,13 +454,14 @@ static struct module* get_module_info(const char *module, const char *name)
 			aliases = aliasesr;
 			aliases[naliases++] = sep;
 		}
+next_string:
 		strings = &sep[strlen(sep)];
 	}
 
-	m = alloc_module(name, aliases, naliases, dep, s.st_size);
+	m = alloc_module(name, aliases, naliases, dep, is_builtin ? 0 : s.st_size);
 
 	if (m)
-		m->state = SCANNED;
+		m->state = is_builtin ? BUILTIN : SCANNED;
 
 out:
 	if (map != MAP_FAILED)
@@ -475,13 +509,11 @@ static int scan_builtin_modules(void)
 			ULOG_WARN("found duplicate builtin module %s\n", name);
 			continue;
 		}
-		m = alloc_module(name, NULL, 0, NULL, 0);
+		m = get_module_info(NULL, name);
 		if (!m) {
-			ULOG_ERR("failed to allocate memory for module\n");
+			ULOG_ERR("failed to find info for builtin module %s\n", name);
 			goto err;
 		}
-
-		m->state = BUILTIN;
 	}
 out:
 	rv = 0;
@@ -552,40 +584,63 @@ static int scan_module_folders(void)
 	return rv;
 }
 
-static int print_modinfo(char *module)
+static int print_modinfo(const struct module *m)
 {
-	int fd = open(module, O_RDONLY);
+	const bool is_builtin = (m->state == BUILTIN);
 	unsigned int offset, size;
 	struct param *p;
 	struct stat s;
-	char *map = MAP_FAILED, *strings;
-	int rv = -1;
+	char *map = MAP_FAILED, *strings, **f;
+	char path[350], *mpath = NULL;
+	int fd, rv = -1;
 
 	LIST_HEAD(params);
 
+	if (is_builtin)
+		for (f = module_folders; *f; f++) {
+			snprintf(path, sizeof(path), "%s%s", *f, MOD_BUILTIN_MODINFO);
+			if (!stat(path, &s) && S_ISREG(s.st_mode)) {
+				mpath = path;
+				break;
+			}
+		}
+	else
+		mpath = get_module_path(m->name);
+
+	if (!mpath) {
+		ULOG_ERR("cannot find modinfo path of module - %s\n", m->name);
+		return -1;
+	}
+
+	fd = open(mpath, O_RDONLY);
 	if (fd < 0) {
-		ULOG_ERR("failed to open %s\n", module);
+		ULOG_ERR("failed to open %s\n", mpath);
 		goto out;
 	}
 
 	if (fstat(fd, &s) == -1) {
-		ULOG_ERR("failed to stat %s\n", module);
+		ULOG_ERR("failed to stat %s\n", mpath);
 		goto out;
 	}
 
 	map = mmap(NULL, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (map == MAP_FAILED) {
-		ULOG_ERR("failed to mmap %s\n", module);
+		ULOG_ERR("failed to mmap %s\n", mpath);
 		goto out;
 	}
 
-	if (elf_find_section(map, ".modinfo", &offset, &size)) {
-		ULOG_ERR("failed to load the .modinfo section from %s\n", module);
+	if (is_builtin) {
+		offset = 0;
+		size = s.st_size;
+	} else if (elf_find_section(map, ".modinfo", &offset, &size)) {
+		ULOG_ERR("failed to load the .modinfo section from %s\n", mpath);
 		goto out;
 	}
 
 	strings = map + offset;
-	printf("module:\t\t%s\n", module);
+	if (is_builtin)
+		printf("name:\t\t%s\n", m->name);
+	printf("filename:\t%s\n", is_builtin ? "(builtin)" : mpath);
 	while (true) {
 		char *pname, *pdata;
 		char *dup = NULL;
@@ -595,6 +650,16 @@ static int print_modinfo(char *module)
 			strings++;
 		if (strings >= map + offset + size)
 			break;
+		if (is_builtin) {
+			sep = strstr(strings, ".");
+			if (!sep)
+				break;
+			if (strlen(m->name) == (sep - strings) &&
+			    !strncmp(strings, m->name, sep - strings))
+				strings = sep + 1;
+			else
+				goto next_string;
+		}
 		sep = strstr(strings, "=");
 		if (!sep)
 			break;
@@ -631,6 +696,7 @@ static int print_modinfo(char *module)
 			else
 				p->desc = pdata;
 		}
+next_string:
 		strings = &sep[strlen(sep)];
 		if (dup)
 			free(dup);
@@ -977,6 +1043,9 @@ static int main_modinfo(int argc, char **argv)
 	if (scan_module_folders())
 		return -1;
 
+	if (scan_builtin_modules())
+		return -1;
+
 	name = get_module_name(argv[1]);
 	m = find_module(name);
 	if (!m) {
@@ -984,13 +1053,7 @@ static int main_modinfo(int argc, char **argv)
 		return -1;
 	}
 
-	name = get_module_path(m->name);
-	if (!name) {
-		ULOG_ERR("cannot find path of module - %s\n", m->name);
-		return -1;
-	}
-
-	print_modinfo(name);
+	print_modinfo(m);
 
 	return 0;
 }
