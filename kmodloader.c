@@ -40,6 +40,7 @@
 #include <libubox/list.h>
 
 #define DEF_MOD_PATH "/modules/%s/"
+#define MOD_BUILTIN "modules.builtin"
 /* duplicated from in-kernel include/linux/module.h */
 #define MODULE_NAME_LEN (64 - sizeof(unsigned long))
 
@@ -51,6 +52,7 @@ struct param {
 };
 
 enum {
+	BUILTIN,
 	SCANNED,
 	PROBE,
 	LOADED,
@@ -437,6 +439,57 @@ out:
 	free(aliases);
 
 	return m;
+}
+
+static int scan_builtin_modules(void)
+{
+	char **p, path[350];
+	size_t buf_len = 0;
+	char *buf = NULL;
+	struct stat st;
+	FILE *fp = NULL;
+	int rv = -1;
+
+	if (!module_folders && init_module_folders())
+		goto err;
+	for (p = module_folders; *p; p++) {
+		snprintf(path, sizeof(path), "%s%s", *p, MOD_BUILTIN);
+		if (!stat(path, &st) && S_ISREG(st.st_mode)) {
+			fp = fopen(path, "r");
+			if (fp)
+				break;
+		}
+	}
+	if (!fp)
+		goto out;	/* OK if modules.builtin unavailable */
+
+	while (getline(&buf, &buf_len, fp) > 0) {
+		struct module *m;
+		char *name;
+
+		name = get_module_name(buf);
+		if (!name)
+			continue;
+		m = find_module(name);
+		if (m && !strcmp(m->name, name)) {
+			ULOG_WARN("found duplicate builtin module %s\n", name);
+			continue;
+		}
+		m = alloc_module(name, NULL, 0, NULL, 0);
+		if (!m) {
+			ULOG_ERR("failed to allocate memory for module\n");
+			goto err;
+		}
+
+		m->state = BUILTIN;
+	}
+out:
+	rv = 0;
+err:
+	free(buf);
+	fclose(fp);
+
+	return rv;
 }
 
 static int scan_module_folder(const char *dir)
@@ -856,10 +909,17 @@ static int main_rmmod(int argc, char **argv)
 	if (scan_loaded_modules())
 		return -1;
 
+	if (scan_builtin_modules())
+		return -1;
+
 	name = get_module_name(argv[1]);
 	m = find_module(name);
 	if (!m) {
 		ULOG_ERR("module is not loaded\n");
+		return -1;
+	}
+	if (m->state == BUILTIN) {
+		ULOG_ERR("module is builtin\n");
 		return -1;
 	}
 	ret = syscall(__NR_delete_module, m->name, 0);
@@ -975,6 +1035,9 @@ static int main_modprobe(int argc, char **argv)
 	if (scan_loaded_modules())
 		return -1;
 
+	if (scan_builtin_modules())
+		return -1;
+
 	do {
 		char *name;
 
@@ -987,6 +1050,9 @@ static int main_modprobe(int argc, char **argv)
 		} else if (m && m->state == LOADED) {
 			if (!quiet)
 				ULOG_INFO("%s is already loaded\n", name);
+		} else if (m && m->state == BUILTIN) {
+			if (!quiet)
+				ULOG_INFO("%s is builtin\n", name);
 		} else if (!m) {
 			if (!quiet)
 				ULOG_ERR("failed to find a module named %s\n", name);
