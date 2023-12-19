@@ -364,23 +364,18 @@ out:
 	return rv;
 }
 
-static struct module* get_module_info(const char *module, const char *name)
+static char *mmap_modinfo(const char *module, const char *name, struct stat *s, unsigned int *offset, unsigned int *size)
 {
 	const bool is_builtin = (module == NULL);
-	unsigned int offset, size;
-	char *map = MAP_FAILED, *strings, *dep = NULL;
-	const char **aliases = NULL;
-	const char **aliasesr;
 	const char *mpath = NULL;
+	char *map = MAP_FAILED;
 	char path[350], **f;
-	int fd = -1, naliases = 0;
-	struct module *m = NULL;
-	struct stat s;
+	int fd = -1;
 
 	if (is_builtin)
 		for (f = module_folders; *f; f++) {
 			snprintf(path, sizeof(path), "%s%s", *f, MOD_BUILTIN_MODINFO);
-			if (!stat(path, &s) && S_ISREG(s.st_mode)) {
+			if (!stat(path, s) && S_ISREG(s->st_mode)) {
 				mpath = path;
 				break;
 			}
@@ -399,24 +394,46 @@ static struct module* get_module_info(const char *module, const char *name)
 		goto out;
 	}
 
-	if (fstat(fd, &s) == -1) {
+	if (fstat(fd, s) == -1) {
 		ULOG_ERR("failed to stat %s\n", mpath);
 		goto out;
 	}
 
-	map = mmap(NULL, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+	map = mmap(NULL, s->st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (map == MAP_FAILED) {
 		ULOG_ERR("failed to mmap %s\n", mpath);
 		goto out;
 	}
 
 	if (is_builtin) {
-		offset = 0;
-		size = s.st_size;
-	} else if (elf_find_section(map, ".modinfo", &offset, &size)) {
+		*offset = 0;
+		*size = s->st_size;
+	} else if (elf_find_section(map, ".modinfo", offset, size)) {
 		ULOG_ERR("failed to load the .modinfo section from %s\n", mpath);
-		goto out;
+		munmap(map, s->st_size);
+		map = MAP_FAILED;
 	}
+
+out:
+	if (fd >= 0)
+		close(fd);
+	return map;
+}
+
+static struct module* get_module_info(const char *module, const char *name)
+{
+	const bool is_builtin = (module == NULL);
+	unsigned int offset, size;
+	char *map, *strings, *dep = NULL;
+	const char **aliases = NULL;
+	const char **aliasesr;
+	int naliases = 0;
+	struct module *m = NULL;
+	struct stat s;
+
+	map = mmap_modinfo(module, name, &s, &offset, &size);
+	if (map == MAP_FAILED)
+		goto out;
 
 	strings = map + offset;
 	while (true) {
@@ -466,9 +483,6 @@ next_string:
 out:
 	if (map != MAP_FAILED)
 		munmap(map, s.st_size);
-
-	if (fd >= 0)
-		close(fd);
 
 	free(aliases);
 
@@ -590,52 +604,15 @@ static int print_modinfo(const struct module *m)
 	unsigned int offset, size;
 	struct param *p;
 	struct stat s;
-	char *map = MAP_FAILED, *strings, **f;
-	char path[350], *mpath = NULL;
-	int fd, rv = -1;
+	char *map, *strings, *mpath;
+	int rv = -1;
 
 	LIST_HEAD(params);
 
-	if (is_builtin)
-		for (f = module_folders; *f; f++) {
-			snprintf(path, sizeof(path), "%s%s", *f, MOD_BUILTIN_MODINFO);
-			if (!stat(path, &s) && S_ISREG(s.st_mode)) {
-				mpath = path;
-				break;
-			}
-		}
-	else
-		mpath = get_module_path(m->name);
-
-	if (!mpath) {
-		ULOG_ERR("cannot find modinfo path of module - %s\n", m->name);
-		return -1;
-	}
-
-	fd = open(mpath, O_RDONLY);
-	if (fd < 0) {
-		ULOG_ERR("failed to open %s\n", mpath);
+	mpath = get_module_path(m->name);
+	map = mmap_modinfo(mpath, m->name, &s, &offset, &size);
+	if (map == MAP_FAILED)
 		goto out;
-	}
-
-	if (fstat(fd, &s) == -1) {
-		ULOG_ERR("failed to stat %s\n", mpath);
-		goto out;
-	}
-
-	map = mmap(NULL, s.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-	if (map == MAP_FAILED) {
-		ULOG_ERR("failed to mmap %s\n", mpath);
-		goto out;
-	}
-
-	if (is_builtin) {
-		offset = 0;
-		size = s.st_size;
-	} else if (elf_find_section(map, ".modinfo", &offset, &size)) {
-		ULOG_ERR("failed to load the .modinfo section from %s\n", mpath);
-		goto out;
-	}
 
 	strings = map + offset;
 	if (is_builtin)
@@ -719,9 +696,6 @@ next_string:
 out:
 	if (map != MAP_FAILED)
 		munmap(map, s.st_size);
-
-	if (fd >= 0)
-		close(fd);
 
 	return rv;
 }
