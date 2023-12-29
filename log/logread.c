@@ -19,9 +19,11 @@
 #include <time.h>
 #include <regex.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <string.h>
 
 #define SYSLOG_NAMES
 #include <syslog.h>
@@ -29,11 +31,10 @@
 #include <libubox/ustream.h>
 #include <libubox/blobmsg_json.h>
 #include <libubox/usock.h>
+#include <libubox/list.h>
 #include <libubox/uloop.h>
 #include "libubus.h"
 #include "syslog.h"
-
-#define LOGD_CONNECT_RETRY	10
 
 enum {
 	LOG_STDOUT,
@@ -58,16 +59,34 @@ static const struct blobmsg_policy log_policy[] = {
 	[LOG_TIME] = { .name = "time", .type = BLOBMSG_TYPE_INT64 },
 };
 
-static struct uloop_timeout retry;
-static struct uloop_fd sender;
+struct sender {
+	int type;
+	struct uloop_fd fd;
+};
+static struct sender *senders;
+static size_t sender_count;
+
+struct remote_retry {
+	struct uloop_timeout timer;
+	struct sender* sender;
+};
+
+static struct remote_retry retry;
+
 static regex_t regexp_preg;
 static const char *log_file, *log_ip, *log_port, *log_prefix, *pid_file, *hostname, *regexp_pattern;
-static int log_type = LOG_STDOUT;
-static int log_size, log_udp, log_follow, log_trailer_null = 0;
+static int log_size, log_udp, log_follow, log_trailer_null;
 static int log_timestamp;
-static int logd_conn_tries = LOGD_CONNECT_RETRY;
 static int facility_include;
 static int facility_exclude;
+
+
+static uint32_t log_ubus_objid;
+static struct blob_buf b_log;
+static struct ubus_request req_log;
+static struct ubus_context *ctx;
+
+#define _unused __attribute__((unused))
 
 /* check for facility filter; return 0 if message shall be dropped */
 static int check_facility_filter(int f)
@@ -89,21 +108,36 @@ static const char* getcodetext(int value, CODE *codetable) {
 	return "<unknown>";
 };
 
+static void add_socket_connect_timeout(const char* context) {
+	static const int TIMEOUT = 5000;
+
+	int res = uloop_timeout_set(&retry.timer, TIMEOUT); 
+	if (res) {
+		syslog(LOG_WARNING, "Cannot set timeout from '%s: %d\n", context, res);
+	}
+}
+
 static void log_handle_reconnect(struct uloop_timeout *timeout)
 {
-	sender.fd = usock((log_udp) ? (USOCK_UDP) : (USOCK_TCP), log_ip, log_port);
-	if (sender.fd < 0) {
-		fprintf(stderr, "failed to connect: %m\n");
-		uloop_timeout_set(&retry, 1000);
-	} else {
-		uloop_fd_add(&sender, ULOOP_READ);
+	static int connect_logged_cnt, disconnect_logged_cnt;
+	static const int MAX_CONN_LOGS_COUNT = 1, MAX_DISC_LOGS_COUNT = 3;
 
-		if (log_udp < 2)
+	retry.sender->fd.fd = usock((log_udp) ? (USOCK_UDP) : (USOCK_TCP), log_ip, log_port);
+	if (retry.sender->fd.fd < 0) {
+		if (disconnect_logged_cnt < MAX_DISC_LOGS_COUNT) {
+			syslog(LOG_ERR, "failed to connect to '%s:%s': %m\n", log_ip, log_port);
+			disconnect_logged_cnt++;
+		}
+		add_socket_connect_timeout("log_handle_reconnect");
+		connect_logged_cnt = 0;
+	} else {
+		uloop_fd_add(&retry.sender->fd, ULOOP_READ);
+		if (connect_logged_cnt < MAX_CONN_LOGS_COUNT) {
 			syslog(LOG_INFO, "Logread connected to %s:%s via %s\n",
 				log_ip, log_port, (log_udp) ? ("udp") : ("tcp"));
-
-		if (log_udp == 1)
-			++log_udp;
+			connect_logged_cnt++;
+		}
+		disconnect_logged_cnt = 0;
 	}
 }
 
@@ -111,55 +145,65 @@ static void log_handle_fd(struct uloop_fd *u, unsigned int events)
 {
 	if (u->eof) {
 		uloop_fd_delete(u);
-		close(sender.fd);
-		sender.fd = -1;
-		uloop_timeout_set(&retry, 1000);
+		close(retry.sender->fd.fd);
+		retry.sender->fd.fd = -1;
+		add_socket_connect_timeout("log_handle_fd");
 	}
 }
 
-static int log_notify(struct blob_attr *msg)
+static void open_file_fd(struct sender *current) {
+	current->fd.fd = open(log_file, O_CREAT | O_WRONLY | O_APPEND, 0600);
+	if (current->fd.fd < 0) {
+		syslog(LOG_WARNING, "failed to open out file '%s': %m\n", log_file);
+	}
+}
+
+static void rotate_file(struct sender *current) {
+	char *old = malloc(strlen(log_file) + 5);
+
+	close(current->fd.fd);
+	if (old) {
+		sprintf(old, "%s.old", log_file);
+		rename(log_file, old);
+		free(old);
+	} else {
+		syslog(LOG_WARNING, "No memory for rotation\n");
+	}
+	open_file_fd(current);
+}
+
+static void log_notify(struct blob_attr *msg)
 {
 	struct blob_attr *tb[__LOG_MAX];
-	struct stat s;
 	char buf[LOG_LINE_SIZE + 128];
 	char buf_ts[32];
 	uint32_t p;
 	time_t t;
 	uint32_t t_ms = 0;
 	char *c, *m;
-	int ret = 0;
-
-	if (sender.fd < 0)
-		return 0;
+	struct sender *current;
+	int err;
 
 	blobmsg_parse(log_policy, ARRAY_SIZE(log_policy), tb, blob_data(msg), blob_len(msg));
-	if (!tb[LOG_ID] || !tb[LOG_PRIO] || !tb[LOG_SOURCE] || !tb[LOG_TIME] || !tb[LOG_MSG])
-		return 1;
-
-	if ((log_type == LOG_FILE) && log_size && (!stat(log_file, &s)) && (s.st_size > log_size)) {
-		char *old = malloc(strlen(log_file) + 5);
-
-		close(sender.fd);
-		if (old) {
-			sprintf(old, "%s.old", log_file);
-			rename(log_file, old);
-			free(old);
+	if (!tb[LOG_ID] || !tb[LOG_PRIO] || !tb[LOG_SOURCE] || !tb[LOG_TIME] || !tb[LOG_MSG]) {
+		char *rec = "Unkn";
+		if(tb[LOG_MSG]) {
+			rec = blobmsg_get_string(tb[LOG_MSG]);
 		}
-		sender.fd = open(log_file, O_CREAT | O_WRONLY | O_APPEND, 0600);
-		if (sender.fd < 0) {
-			fprintf(stderr, "failed to open %s: %m\n", log_file);
-			exit(-1);
-		}
+		syslog(LOG_WARNING, "Unknown log record %s\n", rec);
+		return;
 	}
+
 	p = blobmsg_get_u32(tb[LOG_PRIO]);
 
 	if (!check_facility_filter(LOG_FAC(p)))
-			return 0;
+		return;
 
 	m = blobmsg_get_string(tb[LOG_MSG]);
 	if (regexp_pattern &&
 	    regexec(&regexp_preg, m, 0, NULL, 0) == REG_NOMATCH)
-		return 0;
+		return;
+
 	t = blobmsg_get_u64(tb[LOG_TIME]) / 1000;
 	if (log_timestamp) {
 		t_ms = blobmsg_get_u64(tb[LOG_TIME]) % 1000;
@@ -169,55 +213,81 @@ static int log_notify(struct blob_attr *msg)
 	c = ctime(&t);
 	c[strlen(c) - 1] = '\0';
 
-	if (log_type == LOG_NET) {
-		int err;
+	for (current = senders; current < senders + sender_count; current++) {
+		if (current->fd.fd < 0) {
+			// already closed. Reopening scheduled for socket and no reopen for file yet
+			continue;
+		}
+		switch (current->type) {
+			case LOG_FILE:
+			case LOG_STDOUT: {
+				struct stat s;
+				
+				if ((current->type == LOG_FILE) && log_size && 
+					(!stat(log_file, &s)) && (s.st_size >= log_size)) {
+					rotate_file(current);
+				}
+				snprintf(buf, sizeof(buf), "%s %s%s.%s%s %s\n",
+					c, log_timestamp ? buf_ts : "",
+					getcodetext(LOG_FAC(p) << 3, facilitynames),
+					getcodetext(LOG_PRI(p), prioritynames),
+					(blobmsg_get_u32(tb[LOG_SOURCE])) ? ("") : (" kernel:"), m);
+				err = write(current->fd.fd, buf, strlen(buf));
+				if (current->type == LOG_FILE) {
+					if (err < 0) {
+						syslog(LOG_WARNING, "Cannot write log to file '%s'\n", log_file);
+						close(current->fd.fd);
+						current->fd.fd = -1;
+					} else {
+						fsync(current->fd.fd);
+					}
+				}
+				break;
+			}
+			case LOG_NET: {
 
-		snprintf(buf, sizeof(buf), "<%u>", p);
-		strncat(buf, c + 4, 16);
-		if (log_timestamp) {
-			strncat(buf, buf_ts, sizeof(buf) - strlen(buf) - 1);
-		}
-		if (hostname) {
-			strncat(buf, hostname, sizeof(buf) - strlen(buf) - 1);
-			strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
-		}
-		if (log_prefix) {
-			strncat(buf, log_prefix, sizeof(buf) - strlen(buf) - 1);
-			strncat(buf, ": ", sizeof(buf) - strlen(buf) - 1);
-		}
-		if (blobmsg_get_u32(tb[LOG_SOURCE]) == SOURCE_KLOG)
-			strncat(buf, "kernel: ", sizeof(buf) - strlen(buf) - 1);
-		strncat(buf, m, sizeof(buf) - strlen(buf) - 1);
-		if (log_udp)
-			err = write(sender.fd, buf, strlen(buf));
-		else {
-			size_t buflen = strlen(buf);
-			if (!log_trailer_null)
-				buf[buflen] = '\n';
-			err = send(sender.fd, buf, buflen + 1, 0);
-		}
+				snprintf(buf, sizeof(buf), "<%u>", p);
+				strncat(buf, c + 4, 16);
+				if (log_timestamp) {
+					strncat(buf, buf_ts, sizeof(buf) - strlen(buf) - 1);
+				}
+				if (hostname) {
+					strncat(buf, hostname, sizeof(buf) - strlen(buf) - 1);
+					strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
+				}
+				if (log_prefix) {
+					strncat(buf, log_prefix, sizeof(buf) - strlen(buf) - 1);
+					strncat(buf, ": ", sizeof(buf) - strlen(buf) - 1);
+				}
+				if (blobmsg_get_u32(tb[LOG_SOURCE]) == SOURCE_KLOG)
+					strncat(buf, "kernel: ", sizeof(buf) - strlen(buf) - 1);
+				strncat(buf, m, sizeof(buf) - strlen(buf) - 1);
+				size_t buflen = strlen(buf);
+				if (!log_trailer_null) {
+					buf[buflen] = '\n';
+					buflen++;
+				}
+				if (log_udp) {
+					err = write(current->fd.fd, buf, buflen);
+				} else {
+					err = send(current->fd.fd, buf, buflen, 0);
+				}
 
-		if (err < 0) {
-			syslog(LOG_INFO, "Failed to send log data to %s:%s via %s\n",
-				log_ip, log_port, (log_udp) ? ("udp") : ("tcp"));
-			uloop_fd_delete(&sender);
-			close(sender.fd);
-			sender.fd = -1;
-			uloop_timeout_set(&retry, 1000);
+				if (err < 0) {
+					syslog(LOG_WARNING, "Failed to send log data to %s:%s via %s\n",
+						log_ip, log_port, (log_udp) ? ("udp") : ("tcp"));
+					uloop_fd_delete(&current->fd);
+					close(current->fd.fd);
+					current->fd.fd = -1;
+					add_socket_connect_timeout("log_notify");
+				}
+				break;
+			}
+			default: {
+				break;
+			}
 		}
-	} else {
-		snprintf(buf, sizeof(buf), "%s %s%s.%s%s %s\n",
-			c, log_timestamp ? buf_ts : "",
-			getcodetext(LOG_FAC(p) << 3, facilitynames),
-			getcodetext(LOG_PRI(p), prioritynames),
-			(blobmsg_get_u32(tb[LOG_SOURCE])) ? ("") : (" kernel:"), m);
-		ret = write(sender.fd, buf, strlen(buf));
 	}
-
-	if (log_type == LOG_FILE)
-		fsync(sender.fd);
-
-	return ret;
 }
 
 static int usage(const char *prog)
@@ -238,7 +308,7 @@ static int usage(const char *prog)
 		"    -f			Follow log messages\n"
 		"    -u			Use UDP as the protocol\n"
 		"    -t			Add an extra timestamp\n"
-		"    -0			Use \\0 instead of \\n as trailer when using TCP\n"
+		"    -0			Use \\0 instead of \\n as trailer when using remote\n"
 		"\n", prog);
 	return 1;
 }
@@ -250,6 +320,8 @@ static void logread_fd_data_cb(struct ustream *s, int bytes)
 		int len, cur_len;
 
 		a = (void*) ustream_get_read_buf(s, &len);
+		// strange logic.. What if part of header in one buffer and other in another? 
+		// Will not fix it for now...
 		if (len < sizeof(*a))
 			break;
 
@@ -264,12 +336,12 @@ static void logread_fd_data_cb(struct ustream *s, int bytes)
 
 static void logread_fd_state_cb(struct ustream *s)
 {
-	if (log_follow)
-		logd_conn_tries = LOGD_CONNECT_RETRY;
-	uloop_end();
+	if (!log_follow && s->eof) {
+		uloop_end();
+	}
 }
 
-static void logread_fd_cb(struct ubus_request *req, int fd)
+static void logread_fd_cb(_unused struct ubus_request *req, int fd)
 {
 	static struct ustream_fd test_fd;
 
@@ -282,36 +354,114 @@ static void logread_fd_cb(struct ubus_request *req, int fd)
 
 static void logread_setup_output(void)
 {
-	if (sender.fd || sender.cb)
-		return;
+	int all_log_types = 0;
+	struct sender* current;
 
+	sender_count = 0; // don't have to but once we will handle reload in future...
 	if (log_ip && log_port) {
-		openlog("logread", LOG_PID, LOG_DAEMON);
-		log_type = LOG_NET;
-		sender.cb = log_handle_fd;
-		retry.cb = log_handle_reconnect;
-		uloop_timeout_set(&retry, 1000);
-	} else if (log_file) {
-		log_type = LOG_FILE;
-		sender.fd = open(log_file, O_CREAT | O_WRONLY| O_APPEND, 0600);
-		if (sender.fd < 0) {
-			fprintf(stderr, "failed to open %s: %m\n", log_file);
-			exit(-1);
-		}
-	} else {
-		sender.fd = STDOUT_FILENO;
+		sender_count++;
+		all_log_types |= (1<<LOG_NET);
+	}
+
+	if (log_file) {
+		sender_count++;
+		all_log_types |= (1<<LOG_FILE);
+	}
+
+	if (!all_log_types) {
+		sender_count = 1;
+		all_log_types = 1<<LOG_STDOUT;
+	}
+
+	senders = (struct sender *)calloc(sizeof(struct sender), sender_count);
+	if (!senders) {
+		syslog(LOG_ERR, "No memory for senders: %m\n");
+		exit(-1);
+	}
+
+	current = senders;
+
+	if (all_log_types & (1<<LOG_NET)) {
+		current->type = LOG_NET;
+		current->fd.cb = log_handle_fd;
+		retry.timer.cb = log_handle_reconnect;
+		retry.sender = current;
+		add_socket_connect_timeout("logread_setup_output");
+		current++;
+	}
+		
+	if (all_log_types & (1<<LOG_FILE)) {
+		current->type = LOG_FILE;
+		open_file_fd(current);
+		current++;
+	}
+
+	if (all_log_types & (1<<LOG_STDOUT)) {
+		current->type = LOG_STDOUT;
+		current->fd.fd = STDOUT_FILENO;
 	}
 }
 
+static void cancel_log_events_async(void) {
+	ubus_abort_request(ctx, &req_log);
+}
+
+static void add_log_events_async(void) {
+	cancel_log_events_async();
+	if (!ubus_invoke_async(ctx, log_ubus_objid, "read", b_log.head, &req_log)) {
+		req_log.fd_cb = logread_fd_cb;
+		ubus_complete_request_async(ctx, &req_log);
+	}
+}
+
+enum {
+	OBJ_ATTR_ID,
+	OBJ_ATTR_PATH,
+	OBJ_ATTR_MAX
+};
+
+static const struct blobmsg_policy obj_attrs[OBJ_ATTR_MAX] = {
+	[OBJ_ATTR_ID] = { .name = "id", .type = BLOBMSG_TYPE_INT32 },
+	[OBJ_ATTR_PATH] = { .name = "path", .type = BLOBMSG_TYPE_STRING },
+};
+
+static void handle_obj_event(_unused struct ubus_context *ctx, 
+	_unused struct ubus_event_handler *ev,
+	_unused const char *type, struct blob_attr *msg) {
+	static const char* ADD_EVENT = "ubus.object.add"; 
+	static const char* REM_EVENT = "ubus.object.remove";
+	static const char* OBJECT_PATH = "log";
+
+	struct blob_attr *tb[OBJ_ATTR_MAX];
+	blobmsg_parse(obj_attrs, OBJ_ATTR_MAX, tb, blob_data(msg), blob_len(msg));
+
+	if (!tb[OBJ_ATTR_ID] || !tb[OBJ_ATTR_PATH])
+		return;
+
+	if (strncmp(blobmsg_get_string(tb[OBJ_ATTR_PATH]), OBJECT_PATH, sizeof(OBJECT_PATH)/sizeof(char)))
+		return;
+
+	syslog(LOG_DEBUG, "Handle for object 'log' %s\n", type);
+
+	if (!strncmp(type, ADD_EVENT, sizeof(ADD_EVENT)/sizeof(char))) {
+		log_ubus_objid = blobmsg_get_u32(tb[OBJ_ATTR_ID]);
+		add_log_events_async();
+	} else if (!strncmp(type, REM_EVENT, sizeof(REM_EVENT)/sizeof(char))) {
+		cancel_log_events_async();
+	}
+}
+
+static struct ubus_event_handler obj_event_handler = { .cb = handle_obj_event };
+
 int main(int argc, char **argv)
 {
-	struct ubus_context *ctx;
-	uint32_t id;
+	uint32_t id, log_lines = 0;
 	const char *ubus_socket = NULL;
-	int ch, ret, lines = 0;
-	static struct blob_buf b;
+	int ch;
 
 	signal(SIGPIPE, SIG_IGN);
+
+	openlog("logread", LOG_PID, LOG_DAEMON); // default mask is 255 i.e. log all
 
 	while ((ch = getopt(argc, argv, "u0fcs:l:z:Z:r:F:p:S:P:h:e:t")) != -1) {
 		switch (ch) {
@@ -330,6 +480,9 @@ int main(int argc, char **argv)
 			break;
 		case 'F':
 			log_file = optarg;
+			if (log_file[0] == '\0') {
+				log_file = NULL;
+			}
 			break;
 		case 'p':
 			pid_file = optarg;
@@ -341,7 +494,7 @@ int main(int argc, char **argv)
 			log_follow = 1;
 			break;
 		case 'l':
-			lines = atoi(optarg);
+			log_lines = atoi(optarg);
 			break;
 		case 'z':
 			id = strtoul(optarg, NULL, 0) & 0x1f;
@@ -372,13 +525,23 @@ int main(int argc, char **argv)
 			return usage(*argv);
 		}
 	}
+	INIT_LIST_HEAD(&req_log.list); // to not bother about ubus_abort_request
+	blob_buf_init(&b_log, 0);
+	blobmsg_add_u8(&b_log, "stream", 1);
+	blobmsg_add_u8(&b_log, "oneshot", !log_follow);
+	if (log_lines)
+		blobmsg_add_u32(&b_log, "lines", log_lines);
+	else if (log_follow)
+		blobmsg_add_u32(&b_log, "lines", 0);
+		
 	uloop_init();
 
 	ctx = ubus_connect(ubus_socket);
 	if (!ctx) {
-		fprintf(stderr, "Failed to connect to ubus\n");
+		syslog(LOG_ERR, "Failed to connect to ubus\n");
 		return -1;
 	}
+	// why io is blocking...?
 	ubus_add_uloop(ctx);
 
 	if (log_follow && pid_file) {
@@ -389,40 +552,24 @@ int main(int argc, char **argv)
 		}
 	}
 
-	blob_buf_init(&b, 0);
-	blobmsg_add_u8(&b, "stream", 1);
-	blobmsg_add_u8(&b, "oneshot", !log_follow);
-	if (lines)
-		blobmsg_add_u32(&b, "lines", lines);
-	else if (log_follow)
-		blobmsg_add_u32(&b, "lines", 0);
+	logread_setup_output();
 
-	/* ugly ugly ugly ... we need a real reconnect logic */
-	do {
-		struct ubus_request req = { 0 };
+	if (ubus_register_event_handler(ctx, &obj_event_handler, "ubus.object.*")) {
+		syslog(LOG_ERR, "Failed to register object handler\n");
+		return -1;
+	}
 
-		ret = ubus_lookup_id(ctx, "log", &id);
-		if (ret) {
-			fprintf(stderr, "Failed to find log object: %s\n", ubus_strerror(ret));
-			sleep(1);
-			continue;
-		}
-		logd_conn_tries = 0;
-		logread_setup_output();
-
-		ubus_invoke_async(ctx, id, "read", b.head, &req);
-		req.fd_cb = logread_fd_cb;
-		ubus_complete_request_async(ctx, &req);
-
-		uloop_run();
-
-	} while (logd_conn_tries--);
-
+	if (!ubus_lookup_id(ctx, "log", &log_ubus_objid)) {
+		add_log_events_async();
+	}
+	syslog(LOG_DEBUG, "uloop_run\n");
+	uloop_run();
 	ubus_free(ctx);
 	uloop_done();
+	free(senders);
 
 	if (log_follow && pid_file)
 		unlink(pid_file);
 
-	return ret;
+	return 0;
 }
