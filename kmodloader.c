@@ -311,12 +311,13 @@ static int scan_loaded_modules(void)
 {
 	size_t buf_len = 0;
 	char *buf = NULL;
+	int rv = -1;
 	FILE *fp;
 
 	fp = fopen("/proc/modules", "r");
 	if (!fp) {
 		ULOG_ERR("failed to open /proc/modules\n");
-		return -1;
+		goto out;
 	}
 
 	while (getline(&buf, &buf_len, fp) > 0) {
@@ -338,16 +339,18 @@ static int scan_loaded_modules(void)
 		}
 		if (!n) {
 			ULOG_ERR("Failed to allocate memory for module\n");
-			return -1;
+			goto out;
 		}
 
 		n->usage = m.usage;
 		n->state = LOADED;
 	}
+	rv = 0;
+out:
 	free(buf);
 	fclose(fp);
 
-	return 0;
+	return rv;
 }
 
 static struct module* get_module_info(const char *module, const char *name)
