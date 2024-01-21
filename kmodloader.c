@@ -649,8 +649,11 @@ static int print_modinfo(const struct module *m)
 				printf("%s:\t%s\n",  dup, sep);
 		} else {
 			sep2 = strstr(sep, ":");
-			if (!sep2)
+			if (!sep2) {
+				free(dup);
 				break;
+			}
+
 			pname = strndup(sep, sep2 - sep);
 			sep2++;
 			pdata = strdup(sep2);
@@ -673,10 +676,10 @@ static int print_modinfo(const struct module *m)
 			else
 				p->desc = pdata;
 		}
+
+		free(dup);
 next_string:
 		strings = &sep[strlen(sep)];
-		if (dup)
-			free(dup);
 	}
 
 	list_for_each_entry(p, &params, list) {
