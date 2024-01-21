@@ -328,7 +328,7 @@ static int scan_loaded_modules(void)
 	fp = fopen("/proc/modules", "r");
 	if (!fp) {
 		ULOG_ERR("failed to open /proc/modules\n");
-		goto out;
+		return -1;
 	}
 
 	while (getline(&buf, &buf_len, fp) > 0) {
@@ -499,7 +499,7 @@ static int scan_builtin_modules(void)
 	int rv = -1;
 
 	if (!module_folders && init_module_folders())
-		goto err;
+		return -1;
 	for (p = module_folders; *p; p++) {
 		snprintf(path, sizeof(path), "%s%s", *p, MOD_BUILTIN);
 		if (!stat(path, &st) && S_ISREG(st.st_mode)) {
@@ -509,7 +509,7 @@ static int scan_builtin_modules(void)
 		}
 	}
 	if (!fp)
-		goto out;	/* OK if modules.builtin unavailable */
+		return 0;	/* OK if modules.builtin unavailable */
 
 	while (getline(&buf, &buf_len, fp) > 0) {
 		struct module *m;
@@ -529,7 +529,7 @@ static int scan_builtin_modules(void)
 			goto err;
 		}
 	}
-out:
+
 	rv = 0;
 err:
 	free(buf);
