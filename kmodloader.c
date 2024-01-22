@@ -437,12 +437,13 @@ static struct module* get_module_info(const char *module, const char *name)
 
 	strings = map + offset;
 	while (true) {
+		char *end = map + offset + size;
 		char *sep;
 		int len;
 
-		while (!strings[0])
+		while ((strings < end) && !strings[0])
 			strings++;
-		if (strings >= map + offset + size)
+		if (strings >= end)
 			break;
 		if (is_builtin) {
 			sep = strstr(strings, ".");
@@ -624,13 +625,14 @@ static int print_modinfo(const struct module *m)
 		printf("name:\t\t%s\n", m->name);
 	printf("filename:\t%s\n", is_builtin ? "(builtin)" : mpath);
 	while (true) {
+		char *end = map + offset + size;
 		char *pname, *pdata;
 		char *dup = NULL;
 		char *sep, *sep2;
 
-		while (!strings[0])
+		while ((strings < end) && !strings[0])
 			strings++;
-		if (strings >= map + offset + size)
+		if (strings >= end)
 			break;
 		if (is_builtin) {
 			sep = strstr(strings, ".");
