@@ -502,11 +502,16 @@ static int scan_builtin_modules(void)
 		return -1;
 	for (p = module_folders; *p; p++) {
 		snprintf(path, sizeof(path), "%s%s", *p, MOD_BUILTIN);
-		if (!stat(path, &st) && S_ISREG(st.st_mode)) {
-			fp = fopen(path, "r");
-			if (fp)
-				break;
-		}
+		fp = fopen(path, "r");
+		if (!fp)
+			continue;
+
+		if (!fstat(fileno(fp), &st) && S_ISREG(st.st_mode))
+			break;
+
+		/* Not regular file, close it and check next */
+		fclose(fp);
+		fp = NULL;
 	}
 	if (!fp)
 		return 0;	/* OK if modules.builtin unavailable */
