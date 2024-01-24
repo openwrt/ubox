@@ -282,8 +282,10 @@ alloc_module_node(const char *name, struct module *m, bool is_alias)
 		mn->avl.key = strcpy(_name, name);
 		mn->m = m;
 		mn->is_alias = is_alias;
-		avl_insert(&modules, &mn->avl);
-		m->refcnt += 1;
+		if (avl_insert(&modules, &mn->avl) == 0)
+			m->refcnt += 1;
+		else
+			free(mn);
 	}
 	return mn;
 }
