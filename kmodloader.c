@@ -132,6 +132,17 @@ static int init_module_folders(void)
 	return 0;
 }
 
+static void free_module_folders(void)
+{
+	int n = 0;
+
+	if (!module_folders)
+		return;
+	while (module_folders[n])
+		free(module_folders[n++]);
+	free(module_folders);
+}
+
 static struct module *find_module(const char *name)
 {
 	struct module_node *mn;
@@ -881,8 +892,8 @@ static int print_usage(char *arg)
 
 static int main_insmod(int argc, char **argv)
 {
-	char *name, *cur, *options;
-	int i, ret, len;
+	char *name, *cur, *options = NULL;
+	int i, ret = -1, len;
 
 	if (argc < 2)
 		return print_insmod_usage();
@@ -898,11 +909,9 @@ static int main_insmod(int argc, char **argv)
 
 	if (find_module(name)) {
 		ULOG_ERR("module is already loaded - %s\n", name);
-		return -1;
+		goto err;
 
 	}
-
-	free_modules();
 
 	for (len = 0, i = 2; i < argc; i++)
 		len += strlen(argv[i]) + 1;
@@ -910,7 +919,6 @@ static int main_insmod(int argc, char **argv)
 	options = malloc(len);
 	if (!options) {
 		ULOG_ERR("out of memory\n");
-		ret = -1;
 		goto err;
 	}
 
@@ -926,7 +934,6 @@ static int main_insmod(int argc, char **argv)
 
 	if (init_module_folders()) {
 		fprintf(stderr, "Failed to find the folder holding the modules\n");
-		ret = -1;
 		goto err;
 	}
 
@@ -934,7 +941,6 @@ static int main_insmod(int argc, char **argv)
 		name = argv[1];
 	} else if (!get_module_path(name)) {
 		fprintf(stderr, "Failed to find %s. Maybe it is a built in module ?\n", name);
-		ret = -1;
 		goto err;
 	}
 
@@ -944,6 +950,9 @@ static int main_insmod(int argc, char **argv)
 
 err:
 	free(options);
+	free_modules();
+	free_module_folders();
+
 	return ret;
 }
 
@@ -951,7 +960,7 @@ static int main_rmmod(int argc, char **argv)
 {
 	struct module *m;
 	char *name;
-	int ret;
+	int ret = -1;
 
 	if (argc != 2)
 		return print_usage("rmmod");
@@ -966,18 +975,20 @@ static int main_rmmod(int argc, char **argv)
 	m = find_module(name);
 	if (!m) {
 		ULOG_ERR("module is not loaded\n");
-		return -1;
+		goto err;
 	}
 	if (m->state == BUILTIN) {
 		ULOG_ERR("module is builtin\n");
-		return -1;
+		goto err;
 	}
 	ret = syscall(__NR_delete_module, m->name, 0);
 
 	if (ret)
 		ULOG_ERR("unloading the module failed\n");
 
+err:
 	free_modules();
+	free_module_folders();
 
 	return ret;
 }
@@ -1019,6 +1030,7 @@ static int main_lsmod(int argc, char **argv)
 static int main_modinfo(int argc, char **argv)
 {
 	struct module *m;
+	int rv = -1;
 	char *name;
 
 	if (argc != 2)
@@ -1034,12 +1046,17 @@ static int main_modinfo(int argc, char **argv)
 	m = find_module(name);
 	if (!m) {
 		ULOG_ERR("cannot find module - %s\n", argv[1]);
-		return -1;
+		goto err;
 	}
 
 	print_modinfo(m);
 
-	return 0;
+	rv = 0;
+err:
+	free_modules();
+	free_module_folders();
+
+	return rv;
 }
 
 static int main_modprobe(int argc, char **argv)
@@ -1128,6 +1145,7 @@ static int main_modprobe(int argc, char **argv)
 	}
 
 	free_modules();
+	free_module_folders();
 
 	return exit_code;
 }
@@ -1240,6 +1258,8 @@ static int main_loader(int argc, char **argv)
 
 out:
 	globfree(&gl);
+	free_modules();
+	free_module_folders();
 free_path:
 	free(path);
 
