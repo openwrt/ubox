@@ -892,7 +892,7 @@ static int print_usage(char *arg)
 
 static int main_insmod(int argc, char **argv)
 {
-	char *name, *cur, *options = NULL;
+	char *name, *path, *cur, *opts = NULL;
 	int i, ret = -1, len;
 
 	if (argc < 2)
@@ -913,19 +913,19 @@ static int main_insmod(int argc, char **argv)
 
 	}
 
-	for (len = 0, i = 2; i < argc; i++)
+	for (len = 1, i = 2; i < argc; i++)
 		len += strlen(argv[i]) + 1;
 
-	options = malloc(len);
-	if (!options) {
+	opts = malloc(len);
+	if (!opts) {
 		ULOG_ERR("out of memory\n");
 		goto err;
 	}
 
-	options[0] = 0;
-	cur = options;
+	opts[0] = 0;
+	cur = opts;
 	for (i = 2; i < argc; i++) {
-		if (options[0]) {
+		if (opts[0]) {
 			*cur = ' ';
 			cur++;
 		}
@@ -937,19 +937,18 @@ static int main_insmod(int argc, char **argv)
 		goto err;
 	}
 
-	if (get_module_path(argv[1])) {
-		name = argv[1];
-	} else if (!get_module_path(name)) {
+	if (!(path = get_module_path(argv[1])) ||
+	     (path = get_module_path(name))) {
 		fprintf(stderr, "Failed to find %s. Maybe it is a built in module ?\n", name);
 		goto err;
 	}
 
-	ret = insert_module(get_module_path(name), options);
+	ret = insert_module(path, opts);
 	if (ret)
 		ULOG_ERR("failed to insert %s\n", get_module_path(name));
 
 err:
-	free(options);
+	free(opts);
 	free_modules();
 	free_module_folders();
 
