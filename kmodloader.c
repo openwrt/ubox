@@ -290,6 +290,8 @@ alloc_module_node(const char *name, struct module *m, bool is_alias)
 	return mn;
 }
 
+static int avl_modcmp(const void *k1, const void *k2, void *ptr);
+
 static struct module *
 alloc_module(const char *name, const char * const *aliases, int naliases, const char *depends, int size)
 {
@@ -319,7 +321,8 @@ alloc_module(const char *name, const char * const *aliases, int naliases, const 
 	m->refcnt = 0;
 	alloc_module_node(m->name, m, false);
 	for (i = 0; i < naliases; i++)
-		alloc_module_node(aliases[i], m, true);
+		if (avl_modcmp(m->name, aliases[i], NULL))
+			alloc_module_node(aliases[i], m, true);
 
 	return m;
 }
@@ -1030,7 +1033,7 @@ static int main_lsmod(int argc, char **argv)
 
 static int main_modinfo(int argc, char **argv)
 {
-	struct module *m;
+	struct module_node *mn;
 	int rv = -1;
 	char *name;
 
@@ -1044,14 +1047,19 @@ static int main_modinfo(int argc, char **argv)
 		return -1;
 
 	name = get_module_name(argv[1]);
-	m = find_module(name);
-	if (!m) {
+	mn = avl_find_element(&modules, name, mn, avl);
+	if (!mn) {
 		ULOG_ERR("cannot find module - %s\n", argv[1]);
 		goto err;
 	}
 
-	print_modinfo(m);
-
+	if (!mn->avl.leader)
+		print_modinfo(mn->m);
+	else
+		do {
+			print_modinfo(mn->m);
+			mn = (struct module_node *) mn->avl.list.next;
+		} while (!avl_modcmp(name, mn->avl.key, NULL));
 	rv = 0;
 err:
 	free_modules();
@@ -1366,7 +1374,7 @@ int main(int argc, char **argv)
 {
 	char *exec = basename(*argv);
 
-	avl_init(&modules, avl_modcmp, false, NULL);
+	avl_init(&modules, avl_modcmp, true, NULL);
 	if (!strcmp(exec, "insmod"))
 		return main_insmod(argc, argv);
 
