@@ -1,0 +1,88 @@
+name: "CodeQL"
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  schedule:
+    - cron: '31 12 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze (c-cpp)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      security-events: write
+
+    steps:
+      - name: Install Dependencies
+        run: |
+          sudo apt update && sudo apt install cmake make gcc pkg-config libjson-c-dev linux-headers-generic lua5.1 liblua5.1-0-dev
+
+      - name: Install libubox
+        run: |
+          git clone	--depth=1 https://git.openwrt.org/project/libubox.git
+
+          cd libubox
+          cmake -DBUILD_EXAMPLES=OFF
+          make
+          sudo make install
+
+      - name: Install libubus
+        run: |
+          git clone	--depth=1 https://git.openwrt.org/project/ubus.git
+
+          cd ubus
+          cmake -DBUILD_EXAMPLES=OFF
+          make
+          sudo make install
+
+      - name: Install libuci
+        run: |
+          git clone	--depth=1 https://git.openwrt.org/project/uci.git
+
+          cd uci
+          cmake .
+          make
+          sudo make install
+
+      - name: Install libudebug
+        run: |
+          git clone	--depth=1 https://github.com/jow-/ucode
+
+          cd ucode
+          cmake .
+          make
+          sudo make install
+
+      - name: Install libudebug
+        run: |
+          git clone	--depth=1 https://git.openwrt.org/project/udebug.git
+
+          cd udebug
+          cmake .
+          make
+          sudo make install
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Initializes the CodeQL tools for scanning.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          queries: security-and-quality
+
+      - name: Install ubox
+        run: |
+          cmake .
+          make
+          sudo make install
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:c-cpp"
