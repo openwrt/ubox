@@ -9,6 +9,7 @@ logread
 validate_data
 getrandom
 .*
+!.github
 Makefile
 CMakeCache.txt
 CMakeFiles
