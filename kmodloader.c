@@ -132,6 +132,17 @@ static int init_module_folders(void)
 	return 0;
 }
 
+static void free_module_folders(void)
+{
+	int n = 0;
+
+	if (!module_folders)
+		return;
+	while (module_folders[n])
+		free(module_folders[n++]);
+	free(module_folders);
+}
+
 static struct module *find_module(const char *name)
 {
 	struct module_node *mn;
@@ -271,11 +282,15 @@ alloc_module_node(const char *name, struct module *m, bool is_alias)
 		mn->avl.key = strcpy(_name, name);
 		mn->m = m;
 		mn->is_alias = is_alias;
-		avl_insert(&modules, &mn->avl);
-		m->refcnt += 1;
+		if (avl_insert(&modules, &mn->avl) == 0)
+			m->refcnt += 1;
+		else
+			free(mn);
 	}
 	return mn;
 }
+
+static int avl_modcmp(const void *k1, const void *k2, void *ptr);
 
 static struct module *
 alloc_module(const char *name, const char * const *aliases, int naliases, const char *depends, int size)
@@ -306,7 +321,8 @@ alloc_module(const char *name, const char * const *aliases, int naliases, const 
 	m->refcnt = 0;
 	alloc_module_node(m->name, m, false);
 	for (i = 0; i < naliases; i++)
-		alloc_module_node(aliases[i], m, true);
+		if (avl_modcmp(m->name, aliases[i], NULL))
+			alloc_module_node(aliases[i], m, true);
 
 	return m;
 }
@@ -881,8 +897,8 @@ static int print_usage(char *arg)
 
 static int main_insmod(int argc, char **argv)
 {
-	char *name, *cur, *options;
-	int i, ret, len;
+	char *name, *path, *cur, *opts = NULL;
+	int i, ret = -1, len;
 
 	if (argc < 2)
 		return print_insmod_usage();
@@ -898,26 +914,23 @@ static int main_insmod(int argc, char **argv)
 
 	if (find_module(name)) {
 		ULOG_ERR("module is already loaded - %s\n", name);
-		return -1;
+		goto err;
 
 	}
 
-	free_modules();
-
-	for (len = 0, i = 2; i < argc; i++)
+	for (len = 1, i = 2; i < argc; i++)
 		len += strlen(argv[i]) + 1;
 
-	options = malloc(len);
-	if (!options) {
+	opts = malloc(len);
+	if (!opts) {
 		ULOG_ERR("out of memory\n");
-		ret = -1;
 		goto err;
 	}
 
-	options[0] = 0;
-	cur = options;
+	opts[0] = 0;
+	cur = opts;
 	for (i = 2; i < argc; i++) {
-		if (options[0]) {
+		if (opts[0]) {
 			*cur = ' ';
 			cur++;
 		}
@@ -926,24 +939,24 @@ static int main_insmod(int argc, char **argv)
 
 	if (init_module_folders()) {
 		fprintf(stderr, "Failed to find the folder holding the modules\n");
-		ret = -1;
 		goto err;
 	}
 
-	if (get_module_path(argv[1])) {
-		name = argv[1];
-	} else if (!get_module_path(name)) {
+	if (!(path = get_module_path(argv[1])) ||
+	     (path = get_module_path(name))) {
 		fprintf(stderr, "Failed to find %s. Maybe it is a built in module ?\n", name);
-		ret = -1;
 		goto err;
 	}
 
-	ret = insert_module(get_module_path(name), options);
+	ret = insert_module(path, opts);
 	if (ret)
 		ULOG_ERR("failed to insert %s\n", get_module_path(name));
 
 err:
-	free(options);
+	free(opts);
+	free_modules();
+	free_module_folders();
+
 	return ret;
 }
 
@@ -951,7 +964,7 @@ static int main_rmmod(int argc, char **argv)
 {
 	struct module *m;
 	char *name;
-	int ret;
+	int ret = -1;
 
 	if (argc != 2)
 		return print_usage("rmmod");
@@ -966,18 +979,20 @@ static int main_rmmod(int argc, char **argv)
 	m = find_module(name);
 	if (!m) {
 		ULOG_ERR("module is not loaded\n");
-		return -1;
+		goto err;
 	}
 	if (m->state == BUILTIN) {
 		ULOG_ERR("module is builtin\n");
-		return -1;
+		goto err;
 	}
 	ret = syscall(__NR_delete_module, m->name, 0);
 
 	if (ret)
 		ULOG_ERR("unloading the module failed\n");
 
+err:
 	free_modules();
+	free_module_folders();
 
 	return ret;
 }
@@ -1018,7 +1033,8 @@ static int main_lsmod(int argc, char **argv)
 
 static int main_modinfo(int argc, char **argv)
 {
-	struct module *m;
+	struct module_node *mn;
+	int rv = -1;
 	char *name;
 
 	if (argc != 2)
@@ -1031,15 +1047,25 @@ static int main_modinfo(int argc, char **argv)
 		return -1;
 
 	name = get_module_name(argv[1]);
-	m = find_module(name);
-	if (!m) {
+	mn = avl_find_element(&modules, name, mn, avl);
+	if (!mn) {
 		ULOG_ERR("cannot find module - %s\n", argv[1]);
-		return -1;
+		goto err;
 	}
 
-	print_modinfo(m);
+	if (!mn->avl.leader)
+		print_modinfo(mn->m);
+	else
+		do {
+			print_modinfo(mn->m);
+			mn = (struct module_node *) mn->avl.list.next;
+		} while (!avl_modcmp(name, mn->avl.key, NULL));
+	rv = 0;
+err:
+	free_modules();
+	free_module_folders();
 
-	return 0;
+	return rv;
 }
 
 static int main_modprobe(int argc, char **argv)
@@ -1128,6 +1154,7 @@ static int main_modprobe(int argc, char **argv)
 	}
 
 	free_modules();
+	free_module_folders();
 
 	return exit_code;
 }
@@ -1240,6 +1267,8 @@ static int main_loader(int argc, char **argv)
 
 out:
 	globfree(&gl);
+	free_modules();
+	free_module_folders();
 free_path:
 	free(path);
 
@@ -1345,7 +1374,7 @@ int main(int argc, char **argv)
 {
 	char *exec = basename(*argv);
 
-	avl_init(&modules, avl_modcmp, false, NULL);
+	avl_init(&modules, avl_modcmp, true, NULL);
 	if (!strcmp(exec, "insmod"))
 		return main_insmod(argc, argv);
 
