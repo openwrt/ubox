@@ -942,8 +942,8 @@ static int main_insmod(int argc, char **argv)
 		goto err;
 	}
 
-	if (!(path = get_module_path(argv[1])) ||
-	     (path = get_module_path(name))) {
+	if (!((path = get_module_path(argv[1])) ||
+	      (path = get_module_path(name)))) {
 		fprintf(stderr, "Failed to find %s. Maybe it is a built in module ?\n", name);
 		goto err;
 	}
