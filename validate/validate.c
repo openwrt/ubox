@@ -597,8 +597,10 @@ dt_type_portrange(struct dt_state *s, int nargs)
 
 	n = strtoul(s->value, &e, 10);
 
-	if (e == s->value || *e != '-')
-		return false;
+	if (e == s->value || *e != '-') {
+		// If parsing as portrange fails, try parsing as a single port
+		return dt_type_port(s, nargs);
+	}
 
 	m = strtoul(e + 1, &e, 10);
 
