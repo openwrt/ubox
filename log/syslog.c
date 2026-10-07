@@ -89,7 +89,8 @@ log_next(struct log_head *h, int size)
 {
 	struct log_head *n = (struct log_head *) &h->data[PAD(size)];
 
-	return (n >= log_end) ? (log) : (n);
+	/* an entry starts at log when its header doesn't fit before log_end */
+	return (n + 1 > log_end) ? (log) : (n);
 }
 
 static uint64_t
@@ -194,8 +195,16 @@ log_add(char *buf, int size, int source)
 	/* find new oldest entry */
 	next = log_next(newest, size);
 	if (next > newest) {
-		while ((oldest > newest) && (oldest <= next) && (oldest != log))
+		while ((oldest > newest) && (oldest <= next) && (oldest != log)) {
 			oldest = log_next(oldest, oldest->size);
+
+			/*
+			 * past the last entry of the previous round, what is left
+			 * is stale data: the oldest entry is at the start
+			 */
+			if ((oldest > newest) && !oldest->size)
+				oldest = log;
+		}
 	} else {
 		//fprintf(stderr, "Log wrap\n");
 		newest->size = 0;
