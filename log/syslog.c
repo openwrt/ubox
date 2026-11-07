@@ -209,8 +209,11 @@ log_add(char *buf, int size, int source)
 		//fprintf(stderr, "Log wrap\n");
 		newest->size = 0;
 		next = log_next(log, size);
-		for (oldest = log; oldest <= next; oldest = log_next(oldest, oldest->size))
+		for (oldest = log; oldest <= next && oldest->size; oldest = log_next(oldest, oldest->size))
 			;
+		/* nothing is left of the previous round: the new entry is the oldest */
+		if (!oldest->size)
+			oldest = log;
 		newest = log;
 	}
 
