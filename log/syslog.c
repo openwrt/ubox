@@ -327,6 +327,10 @@ log_list(int count, struct log_head *h)
 {
 	unsigned int min = count;
 
+	/* oldest and newest only meet while the buffer is empty */
+	if (oldest == newest)
+		return NULL;
+
 	if (count)
 		min = (count < current_id) ? (current_id - count) : (0);
 	if (!h && oldest->id >= min)
