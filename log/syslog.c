@@ -43,6 +43,12 @@
 
 #define PAD(x) (x % 4) ? (((x) - (x % 4)) + 4) : (x)
 
+/*
+ * The smallest buffer: an entry with the longest message, LOG_LINE_SIZE
+ * bytes with the NUL, and the header of the entry or end marker after it.
+ */
+#define LOG_MIN_SIZE	(LOG_LINE_SIZE + 2 * sizeof(struct log_head))
+
 static char *log_dev = LOG_DEFAULT_SOCKET;
 static int log_size = LOG_DEFAULT_SIZE;
 static struct log_head *log, *log_end, *oldest, *newest;
@@ -192,6 +198,12 @@ log_add(char *buf, int size, int source)
 	if ((priority & LOG_FACMASK) == LOG_LOCAL7)
 		return;
 
+	/* cut kernel lines to LOG_LINE_SIZE like the others, see LOG_MIN_SIZE */
+	if (size > LOG_LINE_SIZE) {
+		size = LOG_LINE_SIZE;
+		buf[size - 1] = 0;
+	}
+
 	/* find new oldest entry */
 	next = log_next(newest, size);
 	if (next > newest) {
@@ -339,8 +351,12 @@ log_list(int count, struct log_head *h)
 int
 log_buffer_init(int size)
 {
-	struct log_head *_log = calloc(1, size);
+	struct log_head *_log;
 
+	if (size < (int) LOG_MIN_SIZE)
+		size = LOG_MIN_SIZE;
+
+	_log = calloc(1, size);
 	if (!_log) {
 		fprintf(stderr, "Failed to initialize log buffer with size %d\n", log_size);
 		return -1;
