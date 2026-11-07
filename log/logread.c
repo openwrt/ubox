@@ -123,6 +123,8 @@ static int log_notify(struct blob_attr *msg)
 	struct stat s;
 	char buf[LOG_LINE_SIZE + 128];
 	char buf_ts[32];
+	char buf_time[32];
+	struct tm tm;
 	uint32_t p;
 	time_t t;
 	uint32_t t_ms = 0;
@@ -166,7 +168,11 @@ static int log_notify(struct blob_attr *msg)
 		snprintf(buf_ts, sizeof(buf_ts), "[%lu.%03u] ",
 				(unsigned long)t, t_ms);
 	}
-	c = ctime(&t);
+	/* not ctime(): musl's aborts on a year with more than four digits */
+	if (!localtime_r(&t, &tm) || tm.tm_year > 9999 - 1900 ||
+	    !asctime_r(&tm, buf_time))
+		return 1;
+	c = buf_time;
 	c[strlen(c) - 1] = '\0';
 
 	if (log_type == LOG_NET) {
