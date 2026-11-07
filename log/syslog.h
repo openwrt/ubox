@@ -38,7 +38,7 @@ void log_init(int log_size);
 void log_shutdown(void);
 
 typedef void (*log_list_cb)(struct log_head *h);
-struct log_head* log_list(int count, struct log_head *h);
+struct log_head* log_list(unsigned int count, struct log_head *h);
 int log_buffer_init(int size);
 void log_add(char *buf, int size, int source);
 void ubus_notify_log(struct log_head *l);
