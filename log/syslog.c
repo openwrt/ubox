@@ -42,7 +42,9 @@
 
 #define KLOG_DEFAULT_PROC	"/proc/kmsg"
 
-#define PAD(x) (x % 4) ? (((x) - (x % 4)) + 4) : (x)
+/* pad the text of an entry so that the next header is aligned */
+#define LOG_ALIGN	__alignof__(struct log_head)
+#define PAD(x)		(((x) + LOG_ALIGN - 1) & ~(LOG_ALIGN - 1))
 
 /*
  * The smallest buffer: an entry with the longest message, LOG_LINE_SIZE
