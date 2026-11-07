@@ -170,11 +170,8 @@ log_add(char *buf, int size, int source)
 		*c = ' ';
 	}
 
-	c = buf + size - 2;
-	while (isspace(*c)) {
+	while (size > 1 && isspace(buf[size - 2]))
 		size--;
-		c--;
-	}
 
 	buf[size - 1] = 0;
 
