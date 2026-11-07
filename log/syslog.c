@@ -27,6 +27,7 @@
 #include <syslog.h>
 #include <errno.h>
 #include <ctype.h>
+#include <limits.h>
 
 #include <libubox/uloop.h>
 #include <libubox/usock.h>
@@ -52,7 +53,7 @@
 static char *log_dev = LOG_DEFAULT_SOCKET;
 static int log_size = LOG_DEFAULT_SIZE;
 static struct log_head *log, *log_end, *oldest, *newest;
-static int current_id = 0;
+static unsigned int current_id = 0;
 static regex_t pat_prio;
 static regex_t pat_tstamp;
 static struct udebug ud;
@@ -325,15 +326,22 @@ syslog_open(void)
 struct log_head*
 log_list(int count, struct log_head *h)
 {
-	unsigned int min = count;
+	/*
+	 * Entries up to "back" behind current_id: the last count ones, all of
+	 * them for 0, none for less. Unlike comparing ids, this still works
+	 * once they wrap around.
+	 */
+	unsigned int back = UINT_MAX;
 
 	/* oldest and newest only meet while the buffer is empty */
 	if (oldest == newest)
 		return NULL;
 
-	if (count)
-		min = (count < current_id) ? (current_id - count) : (0);
-	if (!h && oldest->id >= min)
+	if (count < 0)
+		back = 0;
+	else if (count)
+		back = count;
+	if (!h && current_id - oldest->id <= back)
 		return oldest;
 	if (!h)
 		h = oldest;
@@ -342,7 +350,7 @@ log_list(int count, struct log_head *h)
 		h = log_next(h, h->size);
 		if (!h->size && (h > newest))
 			h = log;
-		if (h->id >= min && (h != newest))
+		if (current_id - h->id <= back && (h != newest))
 			return h;
 	}
 
