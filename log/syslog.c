@@ -27,6 +27,7 @@
 #include <syslog.h>
 #include <errno.h>
 #include <ctype.h>
+#include <limits.h>
 
 #include <libubox/uloop.h>
 #include <libubox/usock.h>
@@ -41,12 +42,20 @@
 
 #define KLOG_DEFAULT_PROC	"/proc/kmsg"
 
-#define PAD(x) (x % 4) ? (((x) - (x % 4)) + 4) : (x)
+/* pad the text of an entry so that the next header is aligned */
+#define LOG_ALIGN	__alignof__(struct log_head)
+#define PAD(x)		(((x) + LOG_ALIGN - 1) & ~(LOG_ALIGN - 1))
+
+/*
+ * The smallest buffer: an entry with the longest message, LOG_LINE_SIZE
+ * bytes with the NUL, and the header of the entry or end marker after it.
+ */
+#define LOG_MIN_SIZE	(LOG_LINE_SIZE + 2 * sizeof(struct log_head))
 
 static char *log_dev = LOG_DEFAULT_SOCKET;
 static int log_size = LOG_DEFAULT_SIZE;
 static struct log_head *log, *log_end, *oldest, *newest;
-static int current_id = 0;
+static unsigned int current_id = 0;
 static regex_t pat_prio;
 static regex_t pat_tstamp;
 static struct udebug ud;
@@ -89,7 +98,8 @@ log_next(struct log_head *h, int size)
 {
 	struct log_head *n = (struct log_head *) &h->data[PAD(size)];
 
-	return (n >= log_end) ? (log) : (n);
+	/* an entry starts at log when its header doesn't fit before log_end */
+	return (n + 1 > log_end) ? (log) : (n);
 }
 
 static uint64_t
@@ -163,11 +173,8 @@ log_add(char *buf, int size, int source)
 		*c = ' ';
 	}
 
-	c = buf + size - 2;
-	while (isspace(*c)) {
+	while (size > 1 && isspace(buf[size - 2]))
 		size--;
-		c--;
-	}
 
 	buf[size - 1] = 0;
 
@@ -191,17 +198,34 @@ log_add(char *buf, int size, int source)
 	if ((priority & LOG_FACMASK) == LOG_LOCAL7)
 		return;
 
+	/* cut kernel lines to LOG_LINE_SIZE like the others, see LOG_MIN_SIZE */
+	if (size > LOG_LINE_SIZE) {
+		size = LOG_LINE_SIZE;
+		buf[size - 1] = 0;
+	}
+
 	/* find new oldest entry */
 	next = log_next(newest, size);
 	if (next > newest) {
-		while ((oldest > newest) && (oldest <= next) && (oldest != log))
+		while ((oldest > newest) && (oldest <= next) && (oldest != log)) {
 			oldest = log_next(oldest, oldest->size);
+
+			/*
+			 * past the last entry of the previous round, what is left
+			 * is stale data: the oldest entry is at the start
+			 */
+			if ((oldest > newest) && !oldest->size)
+				oldest = log;
+		}
 	} else {
 		//fprintf(stderr, "Log wrap\n");
 		newest->size = 0;
 		next = log_next(log, size);
-		for (oldest = log; oldest <= next; oldest = log_next(oldest, oldest->size))
+		for (oldest = log; oldest <= next && oldest->size; oldest = log_next(oldest, oldest->size))
 			;
+		/* nothing is left of the previous round: the new entry is the oldest */
+		if (!oldest->size)
+			oldest = log;
 		newest = log;
 	}
 
@@ -304,11 +328,22 @@ syslog_open(void)
 struct log_head*
 log_list(int count, struct log_head *h)
 {
-	unsigned int min = count;
+	/*
+	 * Entries up to "back" behind current_id: the last count ones, all of
+	 * them for 0, none for less. Unlike comparing ids, this still works
+	 * once they wrap around.
+	 */
+	unsigned int back = UINT_MAX;
 
-	if (count)
-		min = (count < current_id) ? (current_id - count) : (0);
-	if (!h && oldest->id >= min)
+	/* oldest and newest only meet while the buffer is empty */
+	if (oldest == newest)
+		return NULL;
+
+	if (count < 0)
+		back = 0;
+	else if (count)
+		back = count;
+	if (!h && current_id - oldest->id <= back)
 		return oldest;
 	if (!h)
 		h = oldest;
@@ -317,7 +352,7 @@ log_list(int count, struct log_head *h)
 		h = log_next(h, h->size);
 		if (!h->size && (h > newest))
 			h = log;
-		if (h->id >= min && (h != newest))
+		if (current_id - h->id <= back && (h != newest))
 			return h;
 	}
 
@@ -327,8 +362,12 @@ log_list(int count, struct log_head *h)
 int
 log_buffer_init(int size)
 {
-	struct log_head *_log = calloc(1, size);
+	struct log_head *_log;
 
+	if (size < (int) LOG_MIN_SIZE)
+		size = LOG_MIN_SIZE;
+
+	_log = calloc(1, size);
 	if (!_log) {
 		fprintf(stderr, "Failed to initialize log buffer with size %d\n", log_size);
 		return -1;
