@@ -58,7 +58,13 @@ static const struct blobmsg_policy log_policy[] = {
 	[LOG_TIME] = { .name = "time", .type = BLOBMSG_TYPE_INT64 },
 };
 
+/* how long logd gets to send the stream of a read request */
+#define LOGD_REPLY_TIMEOUT	10000
+
 static struct uloop_timeout retry;
+static struct uloop_timeout reply_timeout;
+static bool got_stream;
+static int read_status;
 static struct uloop_fd sender;
 static regex_t regexp_preg;
 static const char *log_file, *log_ip, *log_port, *log_prefix, *pid_file, *hostname, *regexp_pattern;
@@ -279,11 +285,33 @@ static void logread_fd_cb(struct ubus_request *req, int fd)
 {
 	static struct ustream_fd test_fd;
 
+	got_stream = true;
+	uloop_timeout_cancel(&reply_timeout);
 	memset(&test_fd, 0, sizeof(test_fd));
 
 	test_fd.stream.notify_read = logread_fd_data_cb;
 	test_fd.stream.notify_state = logread_fd_state_cb;
 	ustream_fd_init(&test_fd, fd);
+}
+
+/* logd hung, or went away before it answered */
+static void logread_reply_timeout(struct uloop_timeout *t)
+{
+	fprintf(stderr, "logd did not answer within %d s\n", LOGD_REPLY_TIMEOUT / 1000);
+	read_status = UBUS_STATUS_TIMEOUT;
+	uloop_end();
+}
+
+/* the request is over; if no stream came with it, none will */
+static void logread_complete_cb(struct ubus_request *req, int ret)
+{
+	if (got_stream)
+		return;
+
+	uloop_timeout_cancel(&reply_timeout);
+	fprintf(stderr, "logd sent no log: %s\n", ubus_strerror(ret));
+	read_status = ret ? ret : UBUS_STATUS_NO_DATA;
+	uloop_end();
 }
 
 static void logread_setup_output(void)
@@ -416,11 +444,26 @@ int main(int argc, char **argv)
 		logd_conn_tries = 0;
 		logread_setup_output();
 
+		got_stream = false;
+		read_status = 0;
+		reply_timeout.cb = logread_reply_timeout;
 		ubus_invoke_async(ctx, id, "read", b.head, &req);
 		req.fd_cb = logread_fd_cb;
+		req.complete_cb = logread_complete_cb;
 		ubus_complete_request_async(ctx, &req);
+		uloop_timeout_set(&reply_timeout, LOGD_REPLY_TIMEOUT);
 
 		uloop_run();
+
+		uloop_timeout_cancel(&reply_timeout);
+		if (!got_stream)
+			ubus_abort_request(ctx, &req);
+		if (read_status) {
+			ret = read_status;
+			/* follow: ask again, as after a lost stream */
+			if (log_follow)
+				logd_conn_tries = LOGD_CONNECT_RETRY;
+		}
 
 	} while (logd_conn_tries--);
 
